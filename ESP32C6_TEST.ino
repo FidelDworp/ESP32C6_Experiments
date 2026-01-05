@@ -120,9 +120,13 @@ void setup() {
     testPin(currentPositionsRight[i], "Rechter rij R", currentPinMapRight[i]);
   }
 
-  // NeoPixel regenboog
-  Serial.println("\nNeoPixel regenboog...");
-  for (int j = 0; j < 256; j++) {
+  // Einde boodschap + regenboog
+  Serial.println("\nEinde van de test");
+  Serial.println("Regenboog op NeoPixel...");
+  Serial.flush();  // Zorgt dat tekst zeker verschijnt
+
+  // Kortere regenboog (128 stappen ≈ 2.5s)
+  for (int j = 0; j < 128; j++) {
     pixels.setPixelColor(0, Wheel(j & 255));
     pixels.show();
     delay(20);
@@ -131,11 +135,11 @@ void setup() {
   pixels.show();
 
   // Alle pins vrijgeven
-  Serial.println("Alle pins naar INPUT");
   for (int i = 0; i < currentLeftLength; i++) pinMode(currentPinMapLeft[i], INPUT);
   for (int i = 0; i < currentRightLength; i++) pinMode(currentPinMapRight[i], INPUT);
 
-  Serial.println("\nEinde van de test");
+  Serial.println("\nBoard in veilige staat – klaar!");
+  Serial.flush();
 }
 
 void testPin(int position, const char* side, int gpio) {
@@ -154,7 +158,7 @@ void testPin(int position, const char* side, int gpio) {
     delay(250);
   }
 
-  digitalWrite(gpio, LOW);  // blijft LOW
+  digitalWrite(gpio, LOW);
 }
 
 void loop() {
