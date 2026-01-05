@@ -1,6 +1,9 @@
 // ESP32C6_TEST.ino = Test voor controller (ESP32-C6)
 
 #include <Adafruit_NeoPixel.h>
+#include <WiFi.h>
+#include <esp_system.h>
+#include <esp_chip_info.h>
 
 #define NEOPIXEL_PIN 8
 #define NEO_NUM 1
@@ -39,7 +42,7 @@ int currentRightLength;
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n=== ESP32-C6 Eenvoudige Pin Test ===");
+  Serial.println("\n=== ESP32-C6 Volledige Test – Freenove Board ===");
 
   // Board keuze
   Serial.println("Typ '30' of '32' voor board versie:");
@@ -92,11 +95,60 @@ void setup() {
     }
   }
 
-  Serial.println("\nTest begint automatisch...");
   delay(2000);
 
+  // === Extra tests vóór pin-test ===
+
+  // 1. WiFi scan
+  Serial.println("\n--- WiFi scan ---");
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+  int n = WiFi.scanNetworks();
+  if (n == 0) {
+    Serial.println("Geen WiFi netwerken gevonden");
+  } else {
+    Serial.print(n);
+    Serial.println(" netwerken gevonden:");
+    for (int i = 0; i < n; ++i) {
+      Serial.print("  ");
+      Serial.print(WiFi.SSID(i));
+      Serial.print(" (RSSI: ");
+      Serial.print(WiFi.RSSI(i));
+      Serial.println(" dBm)");
+    }
+  }
+
+  // 2. Flash info
+  Serial.println("\n--- Flash info ---");
+  Serial.print("Flash grootte: ");
+  Serial.print(ESP.getFlashChipSize() / 1024);
+  Serial.println(" KB");
+  Serial.print("Vrije sketch space: ");
+  Serial.print(ESP.getFreeSketchSpace() / 1024);
+  Serial.println(" KB");
+
+  // 3. Chip info
+  Serial.println("\n--- Chip info ---");
+  esp_chip_info_t chip_info;
+  esp_chip_info(&chip_info);
+  Serial.print("Chip model: ESP32-C6 (revision ");
+  Serial.print(chip_info.revision);
+  Serial.println(")");
+  Serial.print("CPU frequentie: ");
+  Serial.print(ESP.getCpuFreqMHz());
+  Serial.println(" MHz");
+  Serial.print("MAC address: ");
+  Serial.println(WiFi.macAddress());
+
+  // 4. Heap voor test
+  Serial.println("\n--- Heap geheugen ---");
+  Serial.print("Free heap vóór pin-test: ");
+  Serial.print(ESP.getFreeHeap());
+  Serial.println(" bytes");
+
   // Alle pins LOW zetten
-  Serial.println("Alle pins op LOW...");
+  Serial.println("\nAlle pins op LOW zetten...");
   for (int i = 0; i < currentLeftLength; i++) {
     int gpio = currentPinMapLeft[i];
     pinMode(gpio, OUTPUT);
@@ -108,24 +160,28 @@ void setup() {
     digitalWrite(gpio, LOW);
   }
 
-  // Linker rij
+  // Pin-test
   Serial.println("\n--- Linker rij ---");
   for (int i = 0; i < currentLeftLength; i++) {
     testPin(currentPositionsLeft[i], "Linker rij L", currentPinMapLeft[i]);
   }
 
-  // Rechter rij
   Serial.println("\n--- Rechter rij ---");
   for (int i = 0; i < currentRightLength; i++) {
     testPin(currentPositionsRight[i], "Rechter rij R", currentPinMapRight[i]);
   }
 
-  // Einde boodschap + regenboog
-  Serial.println("\nEinde van de test");
-  Serial.println("Regenboog op NeoPixel...");
-  Serial.flush();  // Zorgt dat tekst zeker verschijnt
+  // Heap na test
+  Serial.print("\nFree heap ná pin-test: ");
+  Serial.print(ESP.getFreeHeap());
+  Serial.println(" bytes");
 
-  // Kortere regenboog (128 stappen ≈ 2.5s)
+  // Eindberichten VÓÓR regenboog
+  Serial.println("\nEinde van de test");
+  Serial.println("Regenboog op NeoPixel volgt nu...");
+  Serial.flush();  // Zorgt dat deze tekst zeker verschijnt
+
+  // Regenboog (kort)
   for (int j = 0; j < 128; j++) {
     pixels.setPixelColor(0, Wheel(j & 255));
     pixels.show();
