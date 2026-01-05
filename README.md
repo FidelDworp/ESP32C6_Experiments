@@ -1,11 +1,12 @@
 # ESP32C6_Experiments
 
-ESP32C6_TEST.ino = Test voor controller (ESP32-C6)
+ESP32C6_TEST.ino = Pin Test voor controller ESP32-C6 gemonteerd op een "Freenove Breakout Board" met ledjes per pin.
 
-Sketch om beide types ESP32-C6 controllers te testen.
-Alle pins worden rondom getest. Je kan de duur van de knipperingen instellen voor de test.
+Beide types ESP32-C6 controllers kunnen getest worden.
+In serial monitor: Typ '30' of '32' voor board versie. Daarna Typ aantal seconden per pin (1-20).
+=> Alle pins worden rondom getest.
 
-Dit zijn de pin configuraties:
+Dit zijn de twee pin configuraties:
 
 "	30-pin RECHTS	30-pin LINKS	
 R12	4	2	L14
