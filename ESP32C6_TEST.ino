@@ -2,7 +2,7 @@
 
 #include <Adafruit_NeoPixel.h>
 
-#define BUTTON_PIN 0       // BOOT knop (IO0) – blijft altijd INPUT_PULLUP behalve tijdens test
+#define BUTTON_PIN 0       // BOOT knop (IO0)
 #define NEOPIXEL_PIN 8
 #define NEO_NUM 1
 
@@ -74,7 +74,7 @@ void setup() {
     currentRightLength = rightLength32;
   }
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);  // IO0 altijd pull-up
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   pixels.begin();
   pixels.clear();
 
@@ -98,7 +98,7 @@ void setup() {
   Serial.println("\nTest begint – druk BOOT knop of typ 'k' + Enter voor OK");
   delay(2000);
 
-  // Alle pins LOW – maar IO0 overslaan!
+  // Alle pins LOW zetten (behalve IO0)
   Serial.println("Alle pins (behalve IO0) op LOW zetten...");
   for (int i = 0; i < currentLeftLength; i++) {
     int gpio = currentPinMapLeft[i];
@@ -114,7 +114,7 @@ void setup() {
       digitalWrite(gpio, LOW);
     }
   }
-  Serial.println("Klaar voor test");
+  Serial.println("Alle pins LOW – klaar voor test");
 
   // Linker rij
   Serial.println("\n--- Linker rij ---");
@@ -128,12 +128,14 @@ void setup() {
     testPin(currentPositionsRight[i], "Rechter rij R", currentPinMapRight[i]);
   }
 
-  // NeoPixel
+  // NeoPixel test
   testNeoPixel();
 
-  // Rapport + één regenboog
-  Serial.println("\n=== RAPPORT ===");
+  // Rapport
+  Serial.println("\n=== VOLLEDIG TEST RAPPORT ===");
   Serial.print(report);
+
+  // Eén regenboog aan het einde
   Serial.println("Eén regenboog op NeoPixel...");
   for (int j = 0; j < 256; j++) {
     pixels.setPixelColor(0, Wheel(j & 255));
@@ -142,7 +144,20 @@ void setup() {
   }
   pixels.clear();
   pixels.show();
-  Serial.println("Test klaar!");
+
+  // Pas nu alle pins vrijgeven (naar INPUT)
+  Serial.println("Alle pins vrijgegeven (naar INPUT) – test voltooid!");
+  for (int i = 0; i < currentLeftLength; i++) {
+    int gpio = currentPinMapLeft[i];
+    pinMode(gpio, INPUT);
+  }
+  for (int i = 0; i < currentRightLength; i++) {
+    int gpio = currentPinMapRight[i];
+    pinMode(gpio, INPUT);
+  }
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // zeker pull-up
+
+  Serial.println("Board is nu in veilige staat.");
 }
 
 void testPin(int position, const char* side, int gpio) {
@@ -151,12 +166,7 @@ void testPin(int position, const char* side, int gpio) {
   Serial.print(" = IO");
   Serial.println(gpio);
 
-  // Speciale behandeling voor IO0
-  if (gpio == 0) {
-    pinMode(gpio, OUTPUT);  // tijdelijk output
-  } else {
-    pinMode(gpio, OUTPUT);
-  }
+  pinMode(gpio, OUTPUT);
 
   unsigned long start = millis();
   bool confirmed = false;
@@ -167,7 +177,6 @@ void testPin(int position, const char* side, int gpio) {
     digitalWrite(gpio, LOW);
     delay(250);
 
-    // BOOT knop (alleen als we niet IO0 testen)
     if (gpio != 0 && digitalRead(BUTTON_PIN) == LOW) {
       delay(20);
       if (digitalRead(BUTTON_PIN) == LOW) {
@@ -178,7 +187,6 @@ void testPin(int position, const char* side, int gpio) {
       }
     }
 
-    // 'k' fallback
     if (Serial.available()) {
       String in = Serial.readStringUntil('\n');
       in.trim();
@@ -194,12 +202,9 @@ void testPin(int position, const char* side, int gpio) {
   report += String(side) + position + " (IO" + gpio + "): " + result + "\n";
   Serial.println("  → " + result);
 
+  // Na test: terug naar LOW (niet INPUT!)
   digitalWrite(gpio, LOW);
-  if (gpio == 0) {
-    pinMode(gpio, INPUT_PULLUP);  // terug naar pull-up
-  } else {
-    pinMode(gpio, INPUT);
-  }
+  // pinMode blijft OUTPUT – alleen aan einde naar INPUT
 }
 
 void testNeoPixel() {
