@@ -6,7 +6,42 @@ Beide types ESP32-C6 controllers kunnen getest worden.
 In serial monitor: Typ '30' of '32' voor board versie. Daarna Typ aantal seconden per pin (1-20).
 => Alle pins worden rondom getest.
 
-Dit zijn de twee pin configuraties:
+----------
+
+* Voorbeeldrapport voor 32-pin module:
+
+=== ESP32-C6 Volledige Test – Freenove Board ===
+Typ '30' of '32' voor board versie:
+32-pin gekozen
+
+Typ aantal seconden per pin (1-20):
+Elke pin knippert 2 seconden
+
+--- WiFi scan ---
+5 netwerken gevonden:
+  Delannoy (RSSI: -58 dBm)
+  SMA1930040367 (RSSI: -74 dBm)
+  telenet-24 (RSSI: -85 dBm)
+  Proximus Public Wi-Fi (RSSI: -91 dBm)
+  WiFi-2.4-2960 (RSSI: -93 dBm)
+
+--- Flash info ---
+Flash grootte: 16384 KB
+Vrije sketch space: 1280 KB
+
+--- Chip info ---
+Chip model: ESP32-C6 (revision 2)
+CPU frequentie: 160 MHz
+MAC address: 58:8C:81:32:
+
+----------
+* Voorbeeldrapport voor 30-pin module:
+
+
+
+-----
+
+Ter informatie: Dit zijn de twee pin configuraties:
 
 "	30-pin RECHTS	30-pin LINKS	
 R12	4	2	L14
