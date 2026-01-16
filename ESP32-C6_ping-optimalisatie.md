@@ -186,7 +186,7 @@ Het model is rechtstreeks geïnspireerd op het bewezen gedrag van Particle Photo
 ---
 
 ## Toepassing
-Hieronder twee sketches die dit toepassen, om te integreren in beide System sketches:
+Hieronder, als voorbeeld, twee (gedeeltelijke sketches die dit toepassen, om te integreren in beide System sketches:
 
 ----------------------------------------
 ```cpp
