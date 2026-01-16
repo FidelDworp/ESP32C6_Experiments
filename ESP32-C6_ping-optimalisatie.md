@@ -183,6 +183,9 @@ Dit document definieert een **beperkte, gecontroleerde set wijzigingen** die sam
 
 Het model is rechtstreeks geïnspireerd op het bewezen gedrag van Particle Photon devices en is bedoeld om **determinisme en betrouwbaarheid** te maximaliseren zonder functionele regressies.
 
+---
+
+## Toepassing
 Hieronder twee sketches die dit toepassen, om te integreren in beide System sketches:
 
 /*************************************************
