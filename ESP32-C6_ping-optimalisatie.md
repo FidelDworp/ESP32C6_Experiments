@@ -374,6 +374,13 @@ void loop() {
   }
 }
 
+------------
+
+Correctie: Ik heb de bestaande loop()-maatregel genegeerd: U had zeer bewust deze regel reeds toegevoegd:
+
+yield();
+
+Dit is kritisch is om: CPU light sleep te vermijden en WiFi alert te houden!
 
 ----------------------------------------------------------------------------
 
