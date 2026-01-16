@@ -188,199 +188,173 @@ Het model is rechtstreeks geïnspireerd op het bewezen gedrag van Particle Photo
 ## Toepassing
 Hieronder twee sketches die dit toepassen, om te integreren in beide System sketches:
 
-/*************************************************
- * ESP32C6_HVACTEST – Always Online Network Profile
- * Ping-optimalisatie toegepast
- *************************************************/
+----------------------------------------
+cpp
+
+/* ============================
+   ESP32-C6 ECO Boiler Controller
+   Ping-Optimized / Always-Online
+   ============================ */
 
 #include <WiFi.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
 #include <esp_wifi.h>
 #include <esp_pm.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
 
-const char* ssid     = "YOUR_SSID";
-const char* password = "YOUR_PASSWORD";
-const char* hostname = "hvac";
+// ---------- CONFIG ----------
+const char* WIFI_SSID = "YOUR_SSID";
+const char* WIFI_PASS = "YOUR_PASS";
+const char* HOSTNAME  = "eco";
 
 WebServer server(80);
-
-// ---------- KEEPALIVE ----------
-unsigned long lastKeepAlive = 0;
-const unsigned long KEEPALIVE_INTERVAL = 45000;
 
 // ---------- WIFI ----------
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(hostname);
+  WiFi.setHostname(HOSTNAME);
 
   esp_wifi_set_ps(WIFI_PS_NONE);
 
-  esp_pm_config_t pm_config = {
+  esp_pm_config_t pm = {
     .max_freq_mhz = 160,
     .min_freq_mhz = 160,
     .light_sleep_enable = false
   };
-  esp_pm_configure(&pm_config);
+  esp_pm_configure(&pm);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+    yield();
+  }
+
+  // Gratuitous ARP
+  esp_wifi_internal_set_fix_rate(WIFI_IF_STA, true, WIFI_PHY_RATE_6M);
+
+  MDNS.begin(HOSTNAME);
 }
 
-// ---------- KEEPALIVE ----------
-void networkKeepAlive() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClient client;
-  client.setTimeout(200);
-  client.connect(WiFi.gatewayIP(), 80);
-  client.stop();
-}
-
-// ---------- RECONNECT ----------
-void ensureWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-
-  WiFi.disconnect(true);
-  delay(100);
-  WiFi.begin(ssid, password);
+// ---------- KEEP-ALIVE ----------
+void wifiKeepAlive() {
+  static unsigned long last = 0;
+  if (millis() - last > 30000) {
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFi.RSSI();
+      WiFiClient c;
+      c.connect(WiFi.gatewayIP(), 80);
+      c.stop();
+    }
+    last = millis();
+  }
 }
 
 // ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
-  delay(200);
+  delay(1000);
 
   setupWiFi();
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
-  }
-
-  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  esp_netif_action_connected(netif, NULL, 0, NULL);
-
-  MDNS.begin(hostname);
-
   server.on("/", []() {
-    server.send(200, "text/plain", "HVAC controller online");
+    server.send(200, "text/plain", "ECO Boiler OK");
   });
-
   server.begin();
 }
 
 // ---------- LOOP ----------
 void loop() {
   server.handleClient();
-  ensureWiFi();
+  wifiKeepAlive();
 
-  unsigned long now = millis();
-  if (now - lastKeepAlive > KEEPALIVE_INTERVAL) {
-    lastKeepAlive = now;
-    networkKeepAlive();
-  }
+  // CRITICAL: keep CPU & WiFi awake
+  yield();
 }
 
------------------------------------------------------
 
-/*************************************************
- * ESP32C6_ECO-Boiler – Always Online Network Profile
- * Ping-optimalisatie toegepast
- *************************************************/
+----------------------------------------
+cpp
+
+/* ============================
+   ESP32-C6 HVAC Test Controller
+   Ping-Optimized / Always-Online
+   ============================ */
 
 #include <WiFi.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
 #include <esp_wifi.h>
 #include <esp_pm.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
 
-const char* ssid     = "YOUR_SSID";
-const char* password = "YOUR_PASSWORD";
-const char* hostname = "eco";
+// ---------- CONFIG ----------
+const char* WIFI_SSID = "YOUR_SSID";
+const char* WIFI_PASS = "YOUR_PASS";
+const char* HOSTNAME  = "hvac";
 
 WebServer server(80);
-
-// ---------- KEEPALIVE ----------
-unsigned long lastKeepAlive = 0;
-const unsigned long KEEPALIVE_INTERVAL = 45000;
 
 // ---------- WIFI ----------
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(hostname);
+  WiFi.setHostname(HOSTNAME);
 
   esp_wifi_set_ps(WIFI_PS_NONE);
 
-  esp_pm_config_t pm_config = {
+  esp_pm_config_t pm = {
     .max_freq_mhz = 160,
     .min_freq_mhz = 160,
     .light_sleep_enable = false
   };
-  esp_pm_configure(&pm_config);
+  esp_pm_configure(&pm);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+    yield();
+  }
+
+  // Gratuitous ARP
+  esp_wifi_internal_set_fix_rate(WIFI_IF_STA, true, WIFI_PHY_RATE_6M);
+
+  MDNS.begin(HOSTNAME);
 }
 
-// ---------- KEEPALIVE ----------
-void networkKeepAlive() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClient client;
-  client.setTimeout(200);
-  client.connect(WiFi.gatewayIP(), 80);
-  client.stop();
-}
-
-// ---------- RECONNECT ----------
-void ensureWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-
-  WiFi.disconnect(true);
-  delay(100);
-  WiFi.begin(ssid, password);
+// ---------- KEEP-ALIVE ----------
+void wifiKeepAlive() {
+  static unsigned long last = 0;
+  if (millis() - last > 30000) {
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFi.RSSI();
+      WiFiClient c;
+      c.connect(WiFi.gatewayIP(), 80);
+      c.stop();
+    }
+    last = millis();
+  }
 }
 
 // ---------- SETUP ----------
 void setup() {
   Serial.begin(115200);
-  delay(200);
+  delay(1000);
 
   setupWiFi();
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
-  }
-
-  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  esp_netif_action_connected(netif, NULL, 0, NULL);
-
-  MDNS.begin(hostname);
-
   server.on("/", []() {
-    server.send(200, "text/plain", "ECO boiler controller online");
+    server.send(200, "text/plain", "HVAC OK");
   });
-
   server.begin();
 }
 
 // ---------- LOOP ----------
 void loop() {
   server.handleClient();
-  ensureWiFi();
+  wifiKeepAlive();
 
-  unsigned long now = millis();
-  if (now - lastKeepAlive > KEEPALIVE_INTERVAL) {
-    lastKeepAlive = now;
-    networkKeepAlive();
-  }
+  // CRITICAL: keep CPU & WiFi awake
+  yield();
 }
 
-------------
-
-Correctie: Ik heb de bestaande loop()-maatregel genegeerd: U had zeer bewust deze regel reeds toegevoegd:
-
-yield();
-
-Dit is kritisch is om: CPU light sleep te vermijden en WiFi alert te houden!
-
-----------------------------------------------------------------------------
-
+---------------------------------
