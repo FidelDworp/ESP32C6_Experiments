@@ -189,7 +189,7 @@ Het model is rechtstreeks geïnspireerd op het bewezen gedrag van Particle Photo
 Hieronder twee sketches die dit toepassen, om te integreren in beide System sketches:
 
 ----------------------------------------
-cpp
+```cpp
 
 /* ============================
    ESP32-C6 ECO Boiler Controller
@@ -271,10 +271,10 @@ void loop() {
   // CRITICAL: keep CPU & WiFi awake
   yield();
 }
-
+```
 
 ----------------------------------------
-cpp
+```cpp
 
 /* ============================
    ESP32-C6 HVAC Test Controller
@@ -356,5 +356,5 @@ void loop() {
   // CRITICAL: keep CPU & WiFi awake
   yield();
 }
-
+```
 ---------------------------------
