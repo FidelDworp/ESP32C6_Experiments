@@ -183,3 +183,194 @@ Dit document definieert een **beperkte, gecontroleerde set wijzigingen** die sam
 
 Het model is rechtstreeks geïnspireerd op het bewezen gedrag van Particle Photon devices en is bedoeld om **determinisme en betrouwbaarheid** te maximaliseren zonder functionele regressies.
 
+Hieronder twee sketches die dit toepassen, om te integreren in beide System sketches:
+
+/*************************************************
+ * ESP32C6_HVACTEST – Always Online Network Profile
+ * Ping-optimalisatie toegepast
+ *************************************************/
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <esp_wifi.h>
+#include <esp_pm.h>
+
+const char* ssid     = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+const char* hostname = "hvac";
+
+WebServer server(80);
+
+// ---------- KEEPALIVE ----------
+unsigned long lastKeepAlive = 0;
+const unsigned long KEEPALIVE_INTERVAL = 45000;
+
+// ---------- WIFI ----------
+void setupWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(hostname);
+
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  esp_pm_config_t pm_config = {
+    .max_freq_mhz = 160,
+    .min_freq_mhz = 160,
+    .light_sleep_enable = false
+  };
+  esp_pm_configure(&pm_config);
+
+  WiFi.begin(ssid, password);
+}
+
+// ---------- KEEPALIVE ----------
+void networkKeepAlive() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClient client;
+  client.setTimeout(200);
+  client.connect(WiFi.gatewayIP(), 80);
+  client.stop();
+}
+
+// ---------- RECONNECT ----------
+void ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.begin(ssid, password);
+}
+
+// ---------- SETUP ----------
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  setupWiFi();
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+  }
+
+  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_action_connected(netif, NULL, 0, NULL);
+
+  MDNS.begin(hostname);
+
+  server.on("/", []() {
+    server.send(200, "text/plain", "HVAC controller online");
+  });
+
+  server.begin();
+}
+
+// ---------- LOOP ----------
+void loop() {
+  server.handleClient();
+  ensureWiFi();
+
+  unsigned long now = millis();
+  if (now - lastKeepAlive > KEEPALIVE_INTERVAL) {
+    lastKeepAlive = now;
+    networkKeepAlive();
+  }
+}
+
+-----------------------------------------------------
+
+/*************************************************
+ * ESP32C6_ECO-Boiler – Always Online Network Profile
+ * Ping-optimalisatie toegepast
+ *************************************************/
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <esp_wifi.h>
+#include <esp_pm.h>
+
+const char* ssid     = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+const char* hostname = "eco";
+
+WebServer server(80);
+
+// ---------- KEEPALIVE ----------
+unsigned long lastKeepAlive = 0;
+const unsigned long KEEPALIVE_INTERVAL = 45000;
+
+// ---------- WIFI ----------
+void setupWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(hostname);
+
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  esp_pm_config_t pm_config = {
+    .max_freq_mhz = 160,
+    .min_freq_mhz = 160,
+    .light_sleep_enable = false
+  };
+  esp_pm_configure(&pm_config);
+
+  WiFi.begin(ssid, password);
+}
+
+// ---------- KEEPALIVE ----------
+void networkKeepAlive() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClient client;
+  client.setTimeout(200);
+  client.connect(WiFi.gatewayIP(), 80);
+  client.stop();
+}
+
+// ---------- RECONNECT ----------
+void ensureWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  WiFi.disconnect(true);
+  delay(100);
+  WiFi.begin(ssid, password);
+}
+
+// ---------- SETUP ----------
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  setupWiFi();
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+  }
+
+  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_action_connected(netif, NULL, 0, NULL);
+
+  MDNS.begin(hostname);
+
+  server.on("/", []() {
+    server.send(200, "text/plain", "ECO boiler controller online");
+  });
+
+  server.begin();
+}
+
+// ---------- LOOP ----------
+void loop() {
+  server.handleClient();
+  ensureWiFi();
+
+  unsigned long now = millis();
+  if (now - lastKeepAlive > KEEPALIVE_INTERVAL) {
+    lastKeepAlive = now;
+    networkKeepAlive();
+  }
+}
+
+
+----------------------------------------------------------------------------
+
