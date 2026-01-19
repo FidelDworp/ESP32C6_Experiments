@@ -1680,3 +1680,361 @@ void factoryResetNVS() {
 }
 ```
 ---------------------------------
+## 6. Diagnostics & Self-Test Systeem
+
+### 6.1 Probleem: "Zombie Mode" Detectie
+
+**Observatie:**
+Tijdens tests bleek dat ESP32 in een toestand kan geraken waarbij:
+- `WiFi.status() == WL_CONNECTED` ✅ (ESP32 denkt: "alles OK")
+- Ping timeout ❌ (externe clients kunnen niet bereiken)
+- Web UI onbereikbaar ❌
+- **Geen error events** → ESP32 weet van niets
+
+**Root causes:**
+1. **Sensor blocking:** Zonder aangesloten sensoren veroorzaken SPI/1-Wire timeouts 4-5 sec loop blocking
+2. **WiFi stack half-sleep:** Stack reageert niet maar crashed niet
+3. **Keepalive blocking:** TCP connect() kan WiFi RX thread blokkeren
+
+**Conclusie:**
+On-board monitoring ALLEEN is **onvoldoende**. ESP32 kan onbereikbaar zijn zonder het zelf te weten.
+
+---
+
+### 6.2 Complete Self-Test Implementatie
+
+**Principe:**
+- Periodieke interne tests (elke 5 min)
+- Log **alleen failures** (stil bij succes)
+- Externe monitoring (Mac/iPhone/Matter) als ground truth
+
+**Test componenten:**
+```cpp
+// Network Layer Tests
+bool testGatewayPing() {
+  // ICMP ping naar gateway
+  // Detecteert zombie mode
+}
+
+bool testDNS() {
+  // DNS lookup (google.com)
+  // Detecteert DNS/routing problemen
+}
+
+bool testHTTP() {
+  // HTTP GET naar captive.apple.com
+  // Detecteert application layer problemen
+}
+
+bool testNTPSync() {
+  // Check of tijd > 2020
+  // Detecteert NTP issues
+}
+
+// Application Layer Tests
+unsigned long measureWebResponse() {
+  // Meet web request response tijd
+  // Log als >100ms
+}
+
+// Hardware Tests
+bool testSensorHealth() {
+  // Detect sensor timeouts
+  // Meet read durations
+}
+
+// Performance Tests
+unsigned long measureLoopTime() {
+  // Track loop() duration
+  // Log als >100ms
+}
+```
+
+---
+
+### 6.3 UI Integratie: /diagnostics Pagina
+
+**Nieuwe endpoint toevoegen:**
+```cpp
+server.on("/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request){
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Diagnostics</title>
+  <style>
+    body { font-family: Arial; max-width: 800px; margin: 20px auto; }
+    .btn { padding: 10px 20px; margin: 5px; background: #007acc; 
+           color: #fff; text-decoration: none; border-radius: 4px; 
+           display: inline-block; border: none; cursor: pointer; }
+    .status-ok { color: #28a745; }
+    .status-warn { color: #ffc107; }
+    .status-fail { color: #dc3545; }
+    .test-result { padding: 10px; margin: 5px 0; border-left: 4px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>🔍 System Diagnostics</h1>
+  
+  <div style="margin: 20px 0;">
+    <button class="btn" onclick="location.href='/diagnostics/run'">🔄 Run Self-Test Now</button>
+    <a href="/log/view" class="btn">📝 View Debug Log</a>
+    <a href="/log" class="btn">📥 Download Log</a>
+    <a href="/log/clear" class="btn">🗑️ Clear Log</a>
+  </div>
+  
+  <h2>Last Self-Test Results</h2>
+  <div id="results">
+)rawliteral";
+
+  // Test results ophalen en tonen
+  html += "<div class='test-result status-ok'>✅ WiFi: Connected (-54 dBm)</div>";
+  html += "<div class='test-result status-ok'>✅ Gateway Ping: 8ms</div>";
+  html += "<div class='test-result status-ok'>✅ DNS: OK</div>";
+  html += "<div class='test-result status-ok'>✅ HTTP: OK</div>";
+  html += "<div class='test-result status-ok'>✅ Sensors: OK</div>";
+  html += "<div class='test-result status-warn'>⚠️ Heap: 95KB (low)</div>";
+  
+  html += R"rawliteral(
+  </div>
+  
+  <h2>System Info</h2>
+  <table style="width:100%;">
+    <tr><td><strong>Uptime:</strong></td><td>)rawliteral" + String(millis()/1000) + R"rawliteral( sec</td></tr>
+    <tr><td><strong>Free Heap:</strong></td><td>)rawliteral" + String(ESP.getFreeHeap()/1024) + R"rawliteral( KB</td></tr>
+    <tr><td><strong>WiFi RSSI:</strong></td><td>)rawliteral" + String(WiFi.RSSI()) + R"rawliteral( dBm</td></tr>
+    <tr><td><strong>IP Address:</strong></td><td>)rawliteral" + WiFi.localIP().toString() + R"rawliteral(</td></tr>
+  </table>
+  
+  <p><a href="/">← Back to Home</a></p>
+</body>
+</html>
+)rawliteral";
+  
+  request->send(200, "text/html", html);
+});
+
+// Self-test trigger endpoint
+server.on("/diagnostics/run", HTTP_GET, [](AsyncWebServerRequest *request){
+  runSelfTest();  // Voer alle tests uit
+  request->redirect("/diagnostics");
+});
+```
+
+---
+
+### 6.4 Self-Test Scheduler
+
+**In loop():**
+```cpp
+// Self-test elke 5 minuten (automatisch)
+static unsigned long last_self_test = 0;
+const unsigned long SELF_TEST_INTERVAL = 300000UL;  // 5 min
+
+if (millis() - last_self_test >= SELF_TEST_INTERVAL) {
+  runSelfTest();
+  last_self_test = millis();
+}
+```
+
+**runSelfTest() implementatie:**
+```cpp
+void runSelfTest() {
+  bool all_pass = true;
+  
+  // 1. Gateway Ping Test
+  if (!testGatewayPing()) {
+    logEvent("SELF_TEST_FAIL", "ping");
+    all_pass = false;
+    // Auto-recovery: WiFi.reconnect()
+  }
+  
+  // 2. DNS Test
+  if (!testDNS()) {
+    logEvent("SELF_TEST_FAIL", "dns");
+    all_pass = false;
+  }
+  
+  // 3. HTTP Connectivity Test
+  if (!testHTTP()) {
+    logEvent("SELF_TEST_FAIL", "http");
+    all_pass = false;
+  }
+  
+  // 4. Sensor Health (alleen als sensoren actief)
+  if (!SIMULATION_MODE) {
+    unsigned long sensor_start = millis();
+    readSensors();  // Bestaande functie
+    unsigned long sensor_duration = millis() - sensor_start;
+    
+    if (sensor_duration > 3000) {  // >3 sec = probleem
+      char msg[50];
+      snprintf(msg, sizeof(msg), "%lums", sensor_duration);
+      logEvent("SENSOR_SLOW", msg);
+    }
+  }
+  
+  // 5. Memory Check
+  uint32_t free_heap = ESP.getFreeHeap();
+  if (free_heap < 100000) {  // <100KB
+    char msg[50];
+    snprintf(msg, sizeof(msg), "%luKB", free_heap/1024);
+    logEvent("MEM_LOW", msg);
+  }
+  
+  // Stil bij succes - log niets!
+  if (all_pass) {
+    // Optioneel: update last_successful_test timestamp
+  }
+}
+```
+
+---
+
+### 6.5 Externe Monitoring (Essential!)
+
+**Waarom noodzakelijk:**
+ESP32 kan in zombie mode zijn zonder het zelf te weten. Externe monitoring is **ground truth**.
+
+**Implementaties:**
+
+**A. Mac/Linux Ping Monitor:**
+```bash
+#!/bin/bash
+# ping_monitor.sh
+TARGET="192.168.1.99"
+INTERVAL=60
+
+while true; do
+  timestamp=$(date "+[%Y-%m-%d %H:%M:%S]")
+  
+  if ping -c 1 -W 2 $TARGET > /dev/null 2>&1; then
+    time=$(ping -c 1 -W 2 $TARGET | grep "time=" | sed 's/.*time=\([0-9.]*\).*/\1/')
+    echo "$timestamp ✓ ${time}ms"
+  else
+    echo "$timestamp ✗ TIMEOUT"
+    # Optioneel: stuur alert
+  fi
+  
+  sleep $INTERVAL
+done
+```
+
+**B. Matter Controller (Apple Home):**
+- Ingebouwde health monitoring
+- Automatic "Not Responding" detection
+- Geen extra code nodig
+
+**C. Custom Health Endpoint:**
+```cpp
+server.on("/health", HTTP_GET, [](AsyncWebServerRequest *request){
+  StaticJsonDocument<256> doc;
+  doc["status"] = "ok";
+  doc["uptime"] = millis() / 1000;
+  doc["wifi_rssi"] = WiFi.RSSI();
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["wifi_connected"] = (WiFi.status() == WL_CONNECTED);
+  
+  String json;
+  serializeJson(doc, json);
+  request->send(200, "application/json", json);
+});
+```
+
+---
+
+### 6.6 Logging System (reeds geïmplementeerd in v1.8.3)
+
+**Bestaande implementatie:**
+- SPIFFS event logging (800KB circular buffer)
+- Timestamp in Brussels tijd (NTP)
+- Web endpoints: `/log`, `/log/view`, `/log/clear`
+- **Stil tenzij problemen** (essentieel!)
+
+**Event types:**
+```
+BOOT           - Controller restart
+WIFI_CONN      - WiFi verbonden
+WIFI_DISC      - WiFi disconnected
+KA_FAIL        - Keepalive failed
+KA_SLOW        - Keepalive >200ms
+LOOP_SLOW      - Loop >100ms
+MEM_LOW        - Heap <100KB
+SELF_TEST_FAIL - Self-test gefaald
+SENSOR_SLOW    - Sensor read >3s
+```
+
+---
+
+### 6.7 Best Practices Samenvatting
+
+**✅ DO:**
+1. Implement self-test met auto-recovery
+2. Log ALLEEN failures (stil = goed!)
+3. Gebruik externe monitoring als ground truth
+4. Test sensor blocking in simulation mode
+5. Meet loop() timing continuous
+6. Expose `/health` endpoint voor monitoring
+7. Correleer ESP32 + externe logs bij problemen
+
+**❌ DON'T:**
+1. Log successes (vervuilt log)
+2. Vertrouw alleen op internal tests (zombie mode!)
+3. Negeer sensor blocking (4-5 sec = te lang)
+4. Blokkeer WiFi stack tijdens tests
+5. Gebruik delay() in self-test code
+
+---
+
+### 6.8 Acceptatiecriteria
+
+**Productie-ready betekent:**
+- ✅ Self-test elke 5 min zonder issues
+- ✅ External ping monitor: >95% success, <50ms
+- ✅ Web UI: altijd <500ms response
+- ✅ Debug log: stil (geen events) tijdens normale werking
+- ✅ Matter: geen "Not Responding" status ooit
+
+**Als niet gehaald:**
+→ Root cause analyse via log correlatie  
+→ Fix implementeren  
+→ Test opnieuw  
+→ **Geen productie tot 24u foutloos**
+
+---
+
+### 6.9 Integratie in Bestaande Sketches
+
+**Minimale wijzigingen:**
+
+**1. Add to globals:**
+```cpp
+unsigned long last_self_test = 0;
+const unsigned long SELF_TEST_INTERVAL = 300000UL;
+```
+
+**2. Add to loop():**
+```cpp
+if (millis() - last_self_test >= SELF_TEST_INTERVAL) {
+  runSelfTest();
+  last_self_test = millis();
+}
+```
+
+**3. Add to setupWebServer():**
+```cpp
+server.on("/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request){
+  // ... zie sectie 6.3 ...
+});
+```
+
+**4. Implement runSelfTest():**
+```cpp
+// ... zie sectie 6.4 ...
+```
+
+---
+
+**Einde Sectie 6: Diagnostics & Self-Test**
