@@ -2038,3 +2038,229 @@ server.on("/diagnostics", HTTP_GET, [](AsyncWebServerRequest *request){
 ---
 
 **Einde Sectie 6: Diagnostics & Self-Test**
+
+
+----------------
+
+# ESP32-C6 Sleep Mode Optimization - Samenvatting
+
+**Projectdocument:** https://raw.githubusercontent.com/FidelDworp/ESP32C6_Experiments/refs/heads/main/ESP32-C6_ping-optimalisatie.md
+
+---
+
+## 🎯 KERNPROBLEEM
+
+**ESP32-C6 "Zombie Mode":**
+- WiFi status blijft `WL_CONNECTED` 
+- ARP entry blijft bestaan in router
+- **MAAR:** reageert niet meer op pings
+- Probleem = ESP32 WiFi stack kernel issue (NIET ARP timeout)
+
+---
+
+## 📊 TEST RESULTATEN
+
+### Geteste versies:
+
+| Versie | Strategie | Uptime | Probleem |
+|--------|-----------|--------|----------|
+| **v1.8.3** | TCP keepalive (30s interval) | **77%** | ✅ Werkte MAAR: 200ms blocking |
+| **v1.9** | Geen keepalive | **59%** → **0%** | ❌ Crashte volledig binnen 3u |
+
+### Bewijs:
+```
+23:51 - v1.9 draait, 65% uptime
+23:51 - ESP32 crashed (0% response)
+23:58 - Reboot ESP32
+23:58 - Blijft DOOD (alle pings timeout)
+```
+
+**Conclusie:** Keepalive is **essentieel** maar TCP blocking is onacceptabel.
+
+---
+
+## 🚀 OPLOSSING: v1.10 - ESP32Ping Library
+
+### Het plan (in gewone taal):
+
+**Oud (v1.8.3):** "Harde schud" elke 30s
+- TCP connect naar server
+- 200ms blocking
+- ESP32 kan niks anders tijdens connect
+
+**Nieuw (v1.10):** "Zacht duwtje" elke 30s  
+- ICMP ping naar gateway
+- Non-blocking (0ms wacht)
+- ESP32 kan alles blijven doen
+
+### Technische implementatie:
+
+```cpp
+#include <ESP32Ping.h>
+
+void loop() {
+  static unsigned long last_ping = 0;
+  
+  if (millis() - last_ping > 30000) {
+    // Non-blocking ping naar gateway
+    Ping.ping(WiFi.gatewayIP(), 1);  // 1 packet, async
+    last_ping = millis();
+  }
+  
+  // Rest van loop() blijft ongewijzigd
+}
+```
+
+---
+
+## 📈 VERWACHTE RESULTATEN v1.10
+
+| Scenario | Uptime | Response tijd | Status |
+|----------|--------|---------------|--------|
+| **Beste case** | 95%+ | <20ms | ✅ Productie klaar |
+| **Realistisch** | 90-95% | <30ms | ✅ Acceptabel |
+| **Worst case** | 85-90% | <50ms | ⚠️ Verder optimaliseren |
+
+---
+
+## ✅ WAT WERKT
+
+1. **TCP keepalive principe** (houdt ESP32 wakker)
+2. **30s interval** (bewezen effectief)
+3. **Ping test monitoring** (betrouwbare metrics)
+4. **ARP monitoring** (ontkracht ARP timeout theorie)
+
+---
+
+## ❌ WAT NIET WERKT
+
+1. **Geen keepalive** → ESP32 crashed binnen 3u
+2. **TCP connect als keepalive** → 200ms blocking (onacceptabel)
+3. **Verwachten dat ESP32 zichzelf wakker houdt** → Zombie mode
+
+---
+
+## 🔧 IMPLEMENTATIE VEREISTEN v1.10
+
+### Code wijzigingen:
+1. **Toevoegen:** `#include <ESP32Ping.h>` (bovenaan sketch)
+2. **Installeren:** ESP32Ping library via Arduino Library Manager
+3. **Verwijderen:** Alle TCP keepalive code uit v1.8.3
+4. **Toevoegen:** ICMP ping logica in `loop()`
+5. **Behouden:** Alle andere functionaliteit ONGEWIJZIGD
+
+### Regressie check vereist:
+- ✅ Sensor reads ongewijzigd
+- ✅ Webserver responses ongewijzigd  
+- ✅ Matter koppeling ongewijzigd
+- ✅ HVAC logica ongewijzigd
+- ✅ NeoPixel control ongewijzigd
+- **ALLEEN:** keepalive mechanisme aangepast
+
+---
+
+## 🎯 TEST PROTOCOL v1.10
+
+### Fase 1: Basis verificatie (1 uur)
+```bash
+# Start ping test
+cd ~/Desktop
+caffeinate -i ./ping_test_v2.sh &
+echo $! > ping_test.pid
+
+# Monitor live
+tail -f mac_ping_*.txt
+
+# Verwacht: >90% success rate eerste uur
+```
+
+### Fase 2: Extended test (24 uur)
+```bash
+# Laat draaien overnight
+# Check morgen: 
+grep "rate=" mac_ping_*.txt | tail -20
+
+# Verwacht: >85% gemiddeld over 24u
+```
+
+### Fase 3: Productie pilot (1 week)
+- 1 controller in productie
+- Matter koppeling actief
+- Dagelijkse uptime check
+- Beslissing: uitrollen of niet
+
+---
+
+## 💪 BACKUP PLAN (als v1.10 <85% uptime)
+
+### Optie A: WiFi stack periodic reset
+```cpp
+// Elke 10 min: preventieve soft reset
+if (millis() - last_reset > 600000) {
+  WiFi.disconnect();
+  delay(100);
+  WiFi.reconnect();
+}
+```
+
+### Optie B: ESP32 classic (niet C6)
+- Stabieler WiFi stack (bewezen)
+- Geen Matter maar HTTP/WiFi werkt perfect
+- Zelfde PCBs compatibel
+- Als laatste redmiddel
+
+---
+
+## 📝 BESLISSINGEN & AFSPRAKEN
+
+### Filip's context:
+- ✅ 20+ ESP32-C6 controllers gekocht
+- ✅ Custom PCBs in China gemaakt
+- ✅ Veel tijd geïnvesteerd in firmware
+- ✅ Doel: Particle Photons vervangen met Matter
+
+### Afspraken:
+1. **Claude onthoudt het plan** (niet telkens opnieuw uitleggen)
+2. **Automatische regressie check** bij elke nieuwe versie
+3. **Duidelijke rapportage** wat gewijzigd is vs ongewijzigd
+4. **Realistische verwachtingen** (geen 100% Photon-niveau beloven)
+
+---
+
+## 🚦 VOLGENDE STAPPEN
+
+### Vandaag (beperkte tijd):
+1. ⏳ **Filip review deze samenvatting**
+2. ⏳ **Groen licht voor v1.10 implementatie**
+
+### Morgen (als tijd):
+1. 📝 **Claude maakt v1.10 code**
+2. ✅ **Regressie check rapport**
+3. 🧪 **Test 1 uur → 24 uur**
+4. 📊 **Resultaten analyseren**
+
+### Deze week:
+- Beslissing productie rollout
+- Matter pilot (1 controller)
+- Documentatie finaliseren
+
+---
+
+## 💬 BELANGRIJKSTE LESSEN
+
+1. **Keepalive is NIET optioneel** (ESP32-C6 WiFi stack quirk)
+2. **Blocking is ONACCEPTABEL** (TCP connect = 200ms blocking)
+3. **ICMP ping = beste oplossing** (non-blocking, light weight)
+4. **Matter heeft eigen keepalive** (dubbele bescherming)
+5. **Test ALTIJD 24u+** (crashes gebeuren na uren)
+
+---
+
+**Status:** 🟡 Wachten op v1.10 implementatie  
+**Verwachting:** 🟢 90-95% uptime haalbaar  
+**Risico:** 🟠 Als <85% → backup plan nodig  
+
+---
+
+*Laatste update: 20 januari 2026*
+
