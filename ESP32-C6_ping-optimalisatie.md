@@ -2454,3 +2454,63 @@ if (!ap_mode && WiFi.status() == WL_CONNECTED &&
 *Test data: 11 uur continuous monitoring*  
 *Resultaat: 98.5% uptime - PRODUCTIE READY* ✅
 
+------
+
+📋 SAMENVATTING VOOR VOLGEND GESPREK (door claude AI)
+
+ORIGINELE OPDRACHT: ECO boiler sketch upgraden van v1.12 naar v1.13 met:
+
+UDP keepalive (98.5% uptime bewezen in v1.12)
+Silent logging (log alleen problemen, niet normale operaties)
+Web UI: 4 nieuwe endpoints (/log/view, /log, /log/clear, /restart)
+
+WAT ER MOEST GEBEUREN
+1. Logging System Inline (✅ GELUKT)
+cpp// Bovenaan sketch na includes toevoegen:
+- initLogging() functie
+- logEvent(), logWarn(), logError(), logInfo()
+- In setup(): if (initLogging()) { ... }
+2. Loop() Keepalive Sectie (✅ GELUKT)
+cpp// In loop() toevoegen:
+- WiFi disconnect detection → logError("WIFI disc")
+- Weak signal check → logWarn("WIFI weak r=X")
+- UDP keepalive naar gateway poort 9
+- Log alleen failures (timeouts, slow >50ms)
+- Memory check elke 10 min
+3. Web Endpoints (⚠️ PROBLEEM HIER)
+cpp// In setupWebServer() toevoegen:
+- /log/view (HTML met "empty = healthy" display)
+- /log (download raw)
+- /log/clear (verwijder log)
+- /restart (reboot ESP32)
+
+WAT ER MIS GING
+
+Gebruiker had AL wijzigingen gemaakt maar sketch was afgekapt op GitHub (eindigde bij regel 1999 met alleen F)
+Ik gaf incomplete instructies om "alles vanaf F te vervangen"
+Dit verwijderde werkende code die er al was
+Gebruiker verloor vertrouwen terecht
+
+HUIDIGE STATUS
+
+✅ Logging system inline = OK
+✅ Loop keepalive code = OK
+❌ Web endpoints = INCOMPLEET (sketch afgekapt)
+❌ setupWebServer() = ONVOLLEDIG
+
+WAT NIEUWE SESSIE MOET DOEN
+Gebruik originele werkende sketch als basis:
+
+Controleer of sketch VOLLEDIG is (moet eindigen met server.begin())
+Vergelijk met Photon versie: /save_settings, /json, /graph_data, OTA handlers
+Voeg ALLEEN ontbrekende logging endpoints toe
+NIET hele stukken herschrijven
+TEST elke change incrementeel
+
+BESTANDEN NODIG VOOR NIEUWE SESSIE
+
+Laatste werkende ECO sketch (voor mijn kapotte instructies)
+Photon versie (als referentie): https://raw.githubusercontent.com/FidelDworp/ESP32C6_HVAC/main/HVAC_Photon.cpp
+GitHub current: https://raw.githubusercontent.com/FidelDworp/ESP32C6_ECO-boiler/refs/heads/main/ESP32C6_ECO-boiler
+
+BOTTOM LINE: Ik gaf slechte instructies die werkende code beschadigden. Nieuwe sessie moet ultra-voorzichtig zijn en incrementeel werken.Claude is AI and can make mistakes. Please double-check responses.
