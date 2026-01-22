@@ -2514,3 +2514,285 @@ Photon versie (als referentie): https://raw.githubusercontent.com/FidelDworp/ESP
 GitHub current: https://raw.githubusercontent.com/FidelDworp/ESP32C6_ECO-boiler/refs/heads/main/ESP32C6_ECO-boiler
 
 BOTTOM LINE: Ik gaf slechte instructies die werkende code beschadigden. Nieuwe sessie moet ultra-voorzichtig zijn en incrementeel werken.Claude is AI and can make mistakes. Please double-check responses.
+
+----------------------
+
+# ESP32 Ping Monitoring Setup - Handleiding
+
+## Wat doet dit systeem?
+
+**2 scripts werken samen:**
+
+1. **ping_test_v2.sh** - Pingt je ESP32 met variabele intervallen
+2. **arp_monitor.sh** - Detecteert timeouts en checkt ARP table
+
+## Bestanden in deze folder
+
+```
+ping_test_v2.sh          # Ping script (met caffeinate)
+arp_monitor.sh           # ARP monitoring script
+ping_test.pid            # Process ID van ping test
+arp_monitor.pid          # Process ID van ARP monitor
+mac_ping_YYYYMMDD_*.txt  # Ping logs (1 per sessie)
+arp_monitor_*.log        # ARP monitor logs (1 per sessie)
+```
+
+---
+
+## TESTEN VAN PINGING Van Mac naar Test ESP32 C6
+
+## Hoe scripts werken op Mac
+
+### Blijven ze draaien?
+
+**JA, scripts blijven ONEINDIG draaien als:**
+- Ze een `while true` loop hebben (zoals beide scripts)
+- Je ze NIET stopt
+- Je Mac NIET herstart
+
+**Scripts stoppen automatisch bij:**
+- Mac reboot
+- Terminal crash
+- `kill` commando
+- Syntax error in script
+
+### Wat is een PID file?
+
+```bash
+ping_test.pid    # Bevat het proces nummer (bijv: 56191)
+arp_monitor.pid  # Bevat het proces nummer (bijv: 56235)
+```
+
+Dit nummer gebruik je om het proces te **vinden** of **stoppen**.
+
+---
+
+## GEBRUIK - Quick Reference
+
+### Start alles
+```bash
+cd ~/Desktop/PINGING_Files
+
+# Start ping test
+./ping_test_v2.sh &
+
+# Start ARP monitor (auto-detect nieuwste ping log)
+./arp_monitor.sh &
+```
+
+### Check status
+```bash
+# Via PID files
+ps -p $(cat ping_test.pid)   # Ping test
+ps -p $(cat arp_monitor.pid) # ARP monitor
+
+# Of zoek alle gerelateerde processen
+ps aux | grep -E "ping_test|arp_monitor|caffeinate" | grep -v grep
+```
+
+### Stop alles
+```bash
+# Netjes stoppen via PID
+kill $(cat ping_test.pid)
+kill $(cat arp_monitor.pid)
+
+# PID files opruimen
+rm ping_test.pid arp_monitor.pid
+
+# Force kill ALLES (radicaal)
+pkill -f caffeinate
+pkill -f ping_test
+pkill -f arp_monitor
+```
+
+### Bekijk live output
+```bash
+# Ping log (realtime)
+tail -f mac_ping_$(date +%Y%m%d)*.txt
+
+# ARP monitor log (realtime)
+tail -f arp_monitor_$(date +%Y%m%d)*.log
+
+# Automatisch nieuwste ping log
+tail -f $(ls -t mac_ping_*.txt | head -1)
+```
+
+---
+
+## TROUBLESHOOTING
+
+### Probleem: ARP monitor kijkt naar oude ping log
+
+**Symptoom:**
+```
+Monitoring: /Users/.../mac_ping_20260119_193744.txt  # OUD!
+```
+
+**Oplossing A: Gebruik gefixte versie**
+```bash
+# Download nieuwe arp_monitor_fixed.sh
+# Vervang oude arp_monitor.sh
+mv arp_monitor.sh arp_monitor_old.sh
+mv arp_monitor_fixed.sh arp_monitor.sh
+chmod +x arp_monitor.sh
+
+# Herstart
+./arp_monitor.sh &
+```
+
+**Oplossing B: Handmatig juiste file opgeven**
+```bash
+# Stop oude monitor
+kill $(cat arp_monitor.pid)
+
+# Start met juiste file
+./arp_monitor.sh ~/Desktop/PINGING_Files/mac_ping_20260122_*.txt &
+```
+
+### Probleem: Script stopt na Mac sleep
+
+**Oorzaak:** `caffeinate` voorkomt sleep, maar als Mac toch slaapt, stopt het script
+
+**Oplossing:** Herstart na wake-up
+```bash
+# Check of processen nog leven
+ps -p $(cat ping_test.pid) || ./ping_test_v2.sh &
+ps -p $(cat arp_monitor.pid) || ./arp_monitor.sh &
+```
+
+### Probleem: Teveel log files
+
+**Oplossing:** Oude logs opruimen
+```bash
+# Verwijder logs ouder dan 7 dagen
+find ~/Desktop/PINGING_Files -name "mac_ping_*.txt" -mtime +7 -delete
+find ~/Desktop/PINGING_Files -name "arp_monitor_*.log" -mtime +7 -delete
+
+# Hou alleen laatste 10 ping logs
+ls -t mac_ping_*.txt | tail -n +11 | xargs rm -f
+```
+
+---
+
+## ANALYSE - Handige commando's
+
+### Tel timeouts per dag
+```bash
+# Vandaag
+grep "✗" mac_ping_$(date +%Y%m%d)*.txt | wc -l
+
+# Gisteren
+grep "✗" mac_ping_$(date -v-1d +%Y%m%d)*.txt | wc -l
+
+# Specifieke dag
+grep "✗" mac_ping_20260122*.txt | wc -l
+```
+
+### Bereken uptime percentage
+```bash
+# Tel totaal aantal pings
+total=$(grep -E "✓|✗" mac_ping_20260122*.txt | wc -l)
+
+# Tel succesvolle pings
+success=$(grep "✓" mac_ping_20260122*.txt | wc -l)
+
+# Bereken percentage
+echo "scale=2; $success * 100 / $total" | bc
+```
+
+### Vind langste timeout periode
+```bash
+# Bekijk ARP monitor log
+grep "TIMEOUT DETECTED" arp_monitor_*.log
+grep "RECOVERY DETECTED" arp_monitor_*.log
+```
+
+### Correleer met ESP32 log
+```bash
+# ESP32 timestamps zijn in Brussels tijd
+# Mac ping timestamps zijn ook in Brussels tijd
+# → Direct vergelijkbaar!
+
+# Zoek timeout rond specifieke tijd
+grep "12:30" mac_ping_20260122*.txt
+```
+
+---
+
+## AUTOMATISCH OPSTARTEN (optioneel)
+
+### Optie 1: LaunchAgent (blijft draaien na reboot)
+
+Maak: `~/Library/LaunchAgents/com.esp32.ping.plist`
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.esp32.ping</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kampendaal/Desktop/PINGING_Files/ping_test_v2.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+Activeer:
+```bash
+launchctl load ~/Library/LaunchAgents/com.esp32.ping.plist
+```
+
+### Optie 2: Crontab (simpeler)
+```bash
+# Open crontab editor
+crontab -e
+
+# Voeg toe (start bij reboot)
+@reboot cd ~/Desktop/PINGING_Files && ./ping_test_v2.sh
+@reboot sleep 10 && cd ~/Desktop/PINGING_Files && ./arp_monitor.sh
+```
+
+---
+
+## FAQ
+
+**Q: Hoe lang blijven de scripts draaien?**  
+A: Voor altijd, totdat je ze stopt of Mac herstart.
+
+**Q: Gebruik het veel CPU/battery?**  
+A: Nee, ping gebruikt ~0.1% CPU. `caffeinate` voorkomt alleen sleep.
+
+**Q: Kan ik meerdere ESP32's monitoren?**  
+A: Ja, dupliceer de scripts met andere TARGET_IP.
+
+**Q: Wat als ik Mac wil laten slapen?**  
+A: Stop `caffeinate` proces, maar ping zal dan niet betrouwbaar zijn.
+
+**Q: Hoe correleer ik met ESP32 logs?**  
+A: Timestamps zijn beide in Brussels tijd, dus direct vergelijkbaar!
+
+---
+
+## NIEUWE FEATURES IN GEFIXTE VERSIE
+
+✅ **Auto-detect nieuwste ping log** - Geen handmatig pad meer nodig  
+✅ **PID file cleanup** - Bij exit automatisch opgeruimd  
+✅ **Error handling** - Duidelijke foutmeldingen  
+✅ **Flexible input** - Kan ook custom ping log path accepteren  
+
+---
+
+## CONTACT & SUPPORT
+
+Bij vragen of problemen, check:
+1. `tail -f` de logs voor realtime output
+2. `ps aux | grep ping` om te zien wat er draait
+3. Deze README voor troubleshooting
+
+**Succes met monitoren!** 🎯
