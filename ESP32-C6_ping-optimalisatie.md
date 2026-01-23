@@ -3586,3 +3586,26 @@ Kortom: deze features zijn bedoeld voor moderne, high-end clients in een schoon 
 Maar gezien het nu "grotendeels opgelost" is, ben je waarschijnlijk klaar – dit is een klassiek Asus + IoT fix. Geniet van je ECO-boiler controller, en als er nog iets opduikt (bijv. na een router-reboot), laat het weten!
 
 Succes, en hopelijk blijft het nu smooth! 🚀
+
+---------------------
+
+### ASUS Router – cruciale instellingen (Chat GPT)
+
+Ga naar Advanced Settings → Wireless / LAN
+
+Zet UIT:
+
+- Airtime Fairness
+- Roaming Assistant
+- Smart Connect
+- IGMP Snooping
+  ➡️ Vooral IGMP Snooping is funest voor ESP32+mDNS.
+- Multicast routing
+- IPv6 (volledig!)
+
+Zet AAN:
+
+- “Enable multicast enhancement” (als aanwezig)
+- Static DHCP lease voor 192.168.1.99
+
+----------------------------------------------
