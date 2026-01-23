@@ -3537,3 +3537,52 @@ Serial.println("✓✓✓ PING OPTIMIZATION: FULLY ACTIVE ✓✓✓");
 **Confidence:** 90% (was timing issue, niet hardware)  
 
 ------------------------------------
+
+### HARDWARE OPLOSSING MET DE ROUTER: (Grok, 23jan26)
+
+Super fijn om te horen dat die aanpassingen grotendeels gewerkt hebben! Dat is typisch voor Asus-routers (vooral oudere modellen zoals de RT-AC5300) met IoT-apparaten zoals jouw ESP32-C6 controller. Laten we even kort samenvatten waarom dit waarschijnlijk het verschil maakte, en wat je nu het best kunt doen om het stabiel te houden (of nog verder te verbeteren).
+
+### Waarom deze instellingen vaak het probleem oplossen bij ESP32 / IoT
+- **Airtime Fairness uitzetten**  
+  Deze feature probeert "eerlijk" lucht-tijd te verdelen tussen snelle (moderne laptops/phones) en trage clients (veel IoT zoals ESP32, slimme lampen, etc.). Maar in de praktijk "straft" het vaak de trage apparaten: ze krijgen minder prioriteit, wat leidt tot timeouts, trage responses of zelfs disconnects bij HTTP-verzoeken (zoals je web UI laden). Vooral bij browsers (Safari/Chrome) die snel opgeven als de eerste packets traag komen.  
+  → Door het uit te zetten, behandelt de router alle clients gelijker → veel stabieler voor embedded devices.
+
+- **IGMP Snooping uitzetten**  
+  IGMP Snooping optimaliseert multicast-verkeer (zoals mDNS voor .local-namen, of discovery-protocollen). Maar bij oudere Asus-firmware of gemengde netwerken kan het multicast-groepen verkeerd tracken, waardoor apparaten na een tijdje "uit de groep vallen" en niet meer bereikbaar zijn via discovery of bepaalde TCP-sessies. Jouw ESP32 gebruikt mDNS (eco.local) en mogelijk multicast in de achtergrond → uitzetten voorkomt dat de router multicast te agressief filtert.
+
+- **Multicast Rate op Auto/OFF**  
+  Dit beperkt hoe snel multicast-packets worden verstuurd. Als het te hoog/low staat, kan het IoT-apparaten die niet snel genoeg reageren "verliezen". Auto/OFF is vaak veiliger voor legacy/embedded stuff.
+
+- **Beamforming uitzetten**  
+  Beamforming richt het signaal gericht op clients (handig voor phones/laptops), maar veel IoT-devices (inclusief ESP32) ondersteunen het niet goed of helemaal niet. Dit kan leiden tot instabiele verbindingen, lagere throughput of disconnects, vooral op 2.4 GHz (waar jouw ESP32 waarschijnlijk op zit). Uitzetten maakt het signaal omnidirectioneel → consistenter voor "domme" clients.
+
+Kortom: deze features zijn bedoeld voor moderne, high-end clients in een schoon netwerk, maar ze breken vaak juist bij low-power IoT zoals ESP32's.
+
+### Wat nu doen om het blijvend stabiel te houden?
+1. **Monitor een paar dagen**  
+   - Probeer de UI regelmatig te openen (Safari + Chrome, Mac + iPhone) na langere inactieve periodes (bijv. 's ochtends, na uren niet aangeraakt).  
+   - Kijk of eco.local nu wél werkt (mDNS zou beter moeten zijn na IGMP uit). Anders blijf bij IP (http://192.168.1.99).
+
+2. **Extra aanbevolen tweaks (als je nog sporadische issues ziet)**  
+   - Ga naar **Wireless → Professional** (voor 2.4 GHz band, want ESP32 zit daar meestal op):  
+     - **Explicit Beamforming** → Disable  
+     - **Universal Beamforming** → Disable  
+     - **MU-MIMO** → Disable (als aanwezig)  
+     - **WMM APSD** → Disable  
+     - **Optimize AMPDU aggregation** → Probeer uit (soms helpt dit bij packet loss)  
+     - **Channel** → Zet vast op 1, 6 of 11 (gebruik WiFi Analyzer app om minst bezette te kiezen) en **Channel Bandwidth** → 20 MHz (niet Auto/40 MHz – beter compatibel met IoT).  
+   - **LAN → Switch Control** → Bevestig IGMP Snooping echt uitstaat (soms per-band/per-interface).  
+   - **Administration → System** → Enable Telnet/SSH als je logs wilt checken, maar niet nodig nu.
+
+3. **Firmware update overwegen?**  
+   Jouw firmware (3.0.0.4.386_48439) is redelijk recent, maar check op asus.com of er een nieuwere is voor RT-AC5300 (soms lost het multicast/beamforming bugs op). Als je durft: Asuswrt-Merlin (community firmware) is vaak stabieler voor IoT – veel mensen melden betere ESP32/WiFi compatibiliteit.
+
+4. **Als het toch terugkomt**  
+   - Log de tijden waarop het faalt (bijv. met dat monitor-script dat ik eerder gaf).  
+   - Kijk of het samenvalt met veel verkeer (downloads, Netflix, etc.) → dan Airtime Fairness issue.  
+   - Of na lang inactief → dan multicast/IGMP timeout.  
+   - Test tijdelijk met een ander WiFi-kanaal of zelfs een goedkope access point (bijv. oude router als AP) puur voor de ESP32.
+
+Maar gezien het nu "grotendeels opgelost" is, ben je waarschijnlijk klaar – dit is een klassiek Asus + IoT fix. Geniet van je ECO-boiler controller, en als er nog iets opduikt (bijv. na een router-reboot), laat het weten!
+
+Succes, en hopelijk blijft het nu smooth! 🚀
