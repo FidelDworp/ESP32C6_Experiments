@@ -3609,3 +3609,12 @@ Zet AAN:
 - Static DHCP lease voor 192.168.1.99
 
 ----------------------------------------------
+
+## 📋 **Samenvatting op 24jan26:**
+
+| Component | Status | Oplossing |
+|-----------|--------|-----------|
+| **ESP32 v1.16** | ✅ **Perfect!** | WiFi power save fix werkt! |
+| **Safari Mac** | ✅ **Perfect!** | Stabiele UI toegang |
+| **Safari iPhone** | ✅ **Perfect!** | Stabiele UI toegang |
+| **Chrome Mac** | ❌ Mysterie bug | Safari gebruiken voor ESP32 |
