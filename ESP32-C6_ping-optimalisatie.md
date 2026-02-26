@@ -2,7 +2,7 @@
 
 ---
 
-# Samenvatting ESP32-C6 Ping-Optimalisatie – Always-Online Profiel
+# Samenvatting
 
 ## Hoofddoel
 ESP32-C6 controllers altijd onmiddellijk bereikbaar maken (ping <10 ms, web-UI direct laadt vanaf Safari op iPhone/Mac), ook na uren idle. Gedrag zoals Particle Photon: deterministisch zichtbaar op LAN, geen "wakker porren" nodig.
