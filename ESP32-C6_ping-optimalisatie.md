@@ -1,5 +1,113 @@
 # ESP32‑C6 Ping‑optimalisatie – Always‑Online Netwerkprofiel
 
+---
+
+Samenvatting ESP32-C6 Ping-Optimalisatie – Always-Online Profiel
+
+Hoofddoel
+ESP32-C6 controllers altijd onmiddellijk bereikbaar maken (ping <10 ms, web-UI direct laadt vanaf Safari op iPhone/Mac), ook na uren idle. Gedrag zoals Particle Photon: deterministisch zichtbaar op LAN, geen "wakker porren" nodig.
+Probleem in een notendop
+Na idle-tijd gaat de ESP32 in WiFi powersave / light sleep → mist ARP-requests van router → router timeout → inkomende TCP (browser) faalt, terwijl uitgaand verkeer (UDP keepalive, ping) wél werkt.
+Root cause: powersave-config te vroeg toegepast (vóór WiFi volledig actief), plus suboptimale router-instellingen (Asus/Telenet-modem).
+Verplichte wijzigingen (de kernfixes)
+
+Netwerkadressering
+
+Voorkeur: DHCP + router-reservering (MAC → vast IP).
+
+In jouw geval (Telenet blokkeert reserveringen): static IP op de ESP zelf is oké — kies buiten DHCP-pool (bijv. 192.168.0.2–99, zoals jouw voorstel .70–.82).
+Gebruik WiFi.config() vóór WiFi.begin(), maar na de powersave-fixes toepassen (zie timing).
+
+WiFi & CPU power management volledig uitschakelen
+Cruciaal: Pas dit toe pas NA WiFi verbonden is (WL_CONNECTED).
+Code (in setupWiFi() of na connect-loop):
+
+C++if (WiFi.status() == WL_CONNECTED) {
+  esp_wifi_set_ps(WIFI_PS_NONE);                  // No powersave
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+  esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 160, .light_sleep_enable = false };
+  esp_pm_configure(&pm);                          // CPU locked 160 MHz
+
+  wifi_config_t cfg;
+  esp_wifi_get_config(WIFI_IF_STA, &cfg);
+  cfg.sta.listen_interval = 1;                    // Luister elke beacon
+  esp_wifi_set_config(WIFI_IF_STA, &cfg);
+
+  Serial.println("✓ Always-online: powersave OFF, listen=1, CPU locked");
+}
+
+Nooit deze calls vóór WiFi.begin() of in begin setup() — dan worden ze genegeerd!
+
+Periodieke unicast keepalive (houdt ARP levend)
+Elke 30 seconden een lichte outbound connect naar gateway (poort 80 of 9/discard):
+
+C++// In globals
+unsigned long last_keepalive = 0;
+const unsigned long KEEPALIVE_INTERVAL = 30000UL;
+
+// In loop()
+if (WiFi.status() == WL_CONNECTED && millis() - last_keepalive >= KEEPALIVE_INTERVAL) {
+  WiFiClient client;
+  client.setTimeout(200);
+  client.connect(WiFi.gatewayIP(), 80);  // of poort 9
+  client.stop();
+  last_keepalive = millis();
+}
+Dit forceert router ARP-refresh zonder multicast/mDNS-ruis.
+
+Auto-reconnect & health check
+In loop():
+
+C++if (WiFi.status() != WL_CONNECTED) {
+  WiFi.reconnect();  // of disconnect(true) + begin()
+}
+Wat absoluut NIET wijzigen
+
+Applicatie-logica (sensoren, pump, HVAC-publish).
+UI/webserver code.
+Beveiliging/TLS.
+Energie-optimalisaties buiten WiFi (geen deep sleep etc.).
+
+Router-tips (vooral relevant voor Telenet/Asus-achtige modems)
+
+Uitzetten (meest impactvol):
+Airtime Fairness
+IGMP Snooping
+Beamforming (explicit/universal)
+MU-MIMO
+Roaming Assistant
+Smart Connect
+WMM APSD
+
+Aan/aanpassen:
+Multicast enhancement → aan (indien aanwezig)
+Kanaal vast op 1/6/11 + 20 MHz breedte
+Static DHCP lease (indien mogelijk)
+
+Extra: Probeer firmware-update of Asuswrt-Merlin als je een eigen router plaatst.
+
+Verwachte resultaten na fixes
+
+Ping altijd <10–50 ms, zelfs na dagen idle.
+Safari (iPhone/Mac) laadt UI eerste keer (95%+ succes).
+Geen zombie-mode meer.
+Uptime 98%+ met keepalive.
+
+Eindstatus uit document (24 jan 2026)
+
+ComponentStatus
+Opmerking / OplossingESP32 v1.16
+✅ PerfectPowersave timing fix werktSafari Mac
+✅ PerfectStabiele UI-toegangSafari iPhone
+✅ PerfectStabiele UI-toegangChrome Mac
+❌ Mysterie bugGebruik Safari voor ESP32-toegang
+
+Dit is de essence van het document: focus op correcte timing van powersave-uitschakeling + keepalive + router-tweaks.
+Static IP past hier prima in (geen conflict met reachability), zolang powersave goed staat.
+
+---
+
 ## Doel en scope
 Dit document beschrijft **uitsluitend** de maatregelen die nodig zijn om ESP32‑C6 controllers:
 - **ogenblikkelijk bereikbaar** te maken (ping/UI, altijd <10 ms)
