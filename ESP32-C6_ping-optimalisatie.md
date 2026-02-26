@@ -106,12 +106,12 @@ Verwachte resultaten na fixes
 
 ## Eindstatus uit document (24 jan 2026)
 
-ComponentStatus
-Opmerking / Oplossing ESP32 v1.16
-✅ PerfectPowersave timing fix werktSafari Mac
-✅ PerfectStabiele UI-toegangSafari iPhone
-✅ PerfectStabiele UI-toegangChrome Mac
-❌ Mysterie bugGebruik Safari voor ESP32-toegang
+| Component     | Status       | Opmerking / Oplossing                     |
+|---------------|--------------|-------------------------------------------|
+| ESP32 v1.16   | ✅ Perfect   | Powersave timing fix werkt                |
+| Safari Mac    | ✅ Perfect   | Stabiele UI-toegang                       |
+| Safari iPhone | ✅ Perfect   | Stabiele UI-toegang                       |
+| Chrome Mac    | ❌ Mysterie bug | Gebruik Safari voor ESP32-toegang     |
 
 Dit is de essence van het document: focus op correcte timing van powersave-uitschakeling + keepalive + router-tweaks.
 Static IP past hier prima in (geen conflict met reachability), zolang powersave goed staat.
