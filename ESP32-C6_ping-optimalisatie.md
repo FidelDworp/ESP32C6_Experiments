@@ -2,27 +2,29 @@
 
 ---
 
-Samenvatting ESP32-C6 Ping-Optimalisatie – Always-Online Profiel
+# Samenvatting ESP32-C6 Ping-Optimalisatie – Always-Online Profiel
 
-Hoofddoel
+## Hoofddoel
 ESP32-C6 controllers altijd onmiddellijk bereikbaar maken (ping <10 ms, web-UI direct laadt vanaf Safari op iPhone/Mac), ook na uren idle. Gedrag zoals Particle Photon: deterministisch zichtbaar op LAN, geen "wakker porren" nodig.
 Probleem in een notendop
 Na idle-tijd gaat de ESP32 in WiFi powersave / light sleep → mist ARP-requests van router → router timeout → inkomende TCP (browser) faalt, terwijl uitgaand verkeer (UDP keepalive, ping) wél werkt.
 Root cause: powersave-config te vroeg toegepast (vóór WiFi volledig actief), plus suboptimale router-instellingen (Asus/Telenet-modem).
 Verplichte wijzigingen (de kernfixes)
 
-Netwerkadressering
+## Netwerkadressering
 
 Voorkeur: DHCP + router-reservering (MAC → vast IP).
 
 In jouw geval (Telenet blokkeert reserveringen): static IP op de ESP zelf is oké — kies buiten DHCP-pool (bijv. 192.168.0.2–99, zoals jouw voorstel .70–.82).
 Gebruik WiFi.config() vóór WiFi.begin(), maar na de powersave-fixes toepassen (zie timing).
 
-WiFi & CPU power management volledig uitschakelen
+## WiFi & CPU power management volledig uitschakelen
+
 Cruciaal: Pas dit toe pas NA WiFi verbonden is (WL_CONNECTED).
 Code (in setupWiFi() of na connect-loop):
 
-C++if (WiFi.status() == WL_CONNECTED) {
+```cpp
+if (WiFi.status() == WL_CONNECTED) {
   esp_wifi_set_ps(WIFI_PS_NONE);                  // No powersave
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
@@ -36,12 +38,14 @@ C++if (WiFi.status() == WL_CONNECTED) {
 
   Serial.println("✓ Always-online: powersave OFF, listen=1, CPU locked");
 }
+```
 
 Nooit deze calls vóór WiFi.begin() of in begin setup() — dan worden ze genegeerd!
 
 Periodieke unicast keepalive (houdt ARP levend)
 Elke 30 seconden een lichte outbound connect naar gateway (poort 80 of 9/discard):
 
+```cpp
 C++// In globals
 unsigned long last_keepalive = 0;
 const unsigned long KEEPALIVE_INTERVAL = 30000UL;
@@ -54,22 +58,27 @@ if (WiFi.status() == WL_CONNECTED && millis() - last_keepalive >= KEEPALIVE_INTE
   client.stop();
   last_keepalive = millis();
 }
+```
+
 Dit forceert router ARP-refresh zonder multicast/mDNS-ruis.
 
-Auto-reconnect & health check
+## Auto-reconnect & health check
 In loop():
 
-C++if (WiFi.status() != WL_CONNECTED) {
+```cpp
+if (WiFi.status() != WL_CONNECTED) {
   WiFi.reconnect();  // of disconnect(true) + begin()
 }
-Wat absoluut NIET wijzigen
+```
+
+## Wat absoluut NIET wijzigen
 
 Applicatie-logica (sensoren, pump, HVAC-publish).
 UI/webserver code.
 Beveiliging/TLS.
 Energie-optimalisaties buiten WiFi (geen deep sleep etc.).
 
-Router-tips (vooral relevant voor Telenet/Asus-achtige modems)
+## Router-tips (vooral relevant voor Telenet/Asus-achtige modems)
 
 Uitzetten (meest impactvol):
 Airtime Fairness
@@ -80,7 +89,8 @@ Roaming Assistant
 Smart Connect
 WMM APSD
 
-Aan/aanpassen:
+## Aan/aanpassen:
+
 Multicast enhancement → aan (indien aanwezig)
 Kanaal vast op 1/6/11 + 20 MHz breedte
 Static DHCP lease (indien mogelijk)
@@ -89,15 +99,15 @@ Extra: Probeer firmware-update of Asuswrt-Merlin als je een eigen router plaatst
 
 Verwachte resultaten na fixes
 
-Ping altijd <10–50 ms, zelfs na dagen idle.
-Safari (iPhone/Mac) laadt UI eerste keer (95%+ succes).
-Geen zombie-mode meer.
-Uptime 98%+ met keepalive.
+-Ping altijd <10–50 ms, zelfs na dagen idle.
+-Safari (iPhone/Mac) laadt UI eerste keer (95%+ succes).
+-Geen zombie-mode meer.
+-Uptime 98%+ met keepalive.
 
-Eindstatus uit document (24 jan 2026)
+## Eindstatus uit document (24 jan 2026)
 
 ComponentStatus
-Opmerking / OplossingESP32 v1.16
+Opmerking / Oplossing ESP32 v1.16
 ✅ PerfectPowersave timing fix werktSafari Mac
 ✅ PerfectStabiele UI-toegangSafari iPhone
 ✅ PerfectStabiele UI-toegangChrome Mac
@@ -106,7 +116,7 @@ Opmerking / OplossingESP32 v1.16
 Dit is de essence van het document: focus op correcte timing van powersave-uitschakeling + keepalive + router-tweaks.
 Static IP past hier prima in (geen conflict met reachability), zolang powersave goed staat.
 
----
+--- OPM: Dit document is te lang on door Grok on-line volledig bereikbaar te zijn! Upload daarom liever de ".md" tekstfile indien nodig!
 
 ## Doel en scope
 Dit document beschrijft **uitsluitend** de maatregelen die nodig zijn om ESP32‑C6 controllers:
