@@ -18,6 +18,14 @@ Voorkeur: DHCP + router-reservering (MAC → vast IP).
 In jouw geval (Telenet blokkeert reserveringen): static IP op de ESP zelf is oké — kies buiten DHCP-pool (bijv. 192.168.0.2–99, zoals jouw voorstel .70–.82).
 Gebruik WiFi.config() vóór WiFi.begin(), maar na de powersave-fixes toepassen (zie timing).
 
+Praktijk in deze setup:
+DHCP-pool Telenet start typisch bij .100
+→ gebruik .70–.82 veilig als static via WiFi.config().
+
+Zorg dat gateway = 192.168.0.1, subnet = 255.255.255.0, DNS = 8.8.8.8 (of 192.168.0.1).
+
+Test na elke wijziging: ping vanaf iPhone (na 5+ min idle) + Safari refresh.
+
 ## WiFi & CPU power management volledig uitschakelen
 
 Cruciaal: Pas dit toe pas NA WiFi verbonden is (WL_CONNECTED).
@@ -117,6 +125,8 @@ Dit is de essence van het document: focus op correcte timing van powersave-uitsc
 Static IP past hier prima in (geen conflict met reachability), zolang powersave goed staat.
 
 --- OPM: Dit document is te lang on door Grok on-line volledig bereikbaar te zijn! Upload daarom liever de ".md" tekstfile indien nodig!
+
+
 
 ## Doel en scope
 Dit document beschrijft **uitsluitend** de maatregelen die nodig zijn om ESP32‑C6 controllers:
