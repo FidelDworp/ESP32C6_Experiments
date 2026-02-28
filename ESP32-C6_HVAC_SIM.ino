@@ -1,21 +1,41 @@
 // =============================================================================
-// ESP32-C6_HVAC_SIM.ino  –  v1  –  28feb26
+// ESP32-C6_HVAC_SIM.ino  –  v2  –  28feb26  19:30
 // Simulatie van HVAC Matter/HomeKit integratie voor ESP32-C6
 // Filip Delannoy – Zarlar thuisautomatisering
 //
 // DOEL: Test de volledige HomeKit interface zonder echte sensoren/hardware.
 //       Gesimuleerde boilertemperaturen en circuittoestanden fluctueren realistisch.
-//       Circuit-switches zijn bidirectioneel:
-//         - Automatisch: spiegelen circuits[i].heating_on → Home app
-//         - Override: Home app toggle → 3 uur override, dan terug naar automaat
+//
+// ENDPOINTS (14 totaal — getest op 4MB Huge App):
+//   5 × MatterTemperatureSensor  (boiler top/mid/bot + kWh SCH + kW totaal)
+//   1 × MatterTemperatureSensor  (vent_percent FAKE — hernoem "Vent %")
+//   1 × MatterThermostat         (ventilatie override 0–100% — hernoem "Vent override")
+//   7 × MatterOnOffLight         (circuits 1–7, bidirectioneel)
+//   1 × MatterOnOffLight         (Alles Auto — wist alle circuit-overrides)
 //
 // FAKE sensors (geen eigen Matter type in Apple Home):
-//   sch_qtot      → MatterTemperatureSensor  (waarde = kWh, hernoem naar "kWh SCH")
-//   total_power   → MatterTemperatureSensor  (waarde = kW,  hernoem naar "kW totaal")
+//   sch_qtot     → MatterTemperatureSensor  (waarde = kWh, hernoem "kWh SCH")
+//   total_power  → MatterTemperatureSensor  (waarde = kW,  hernoem "kW totaal")
+//   vent_percent → MatterTemperatureSensor  (waarde = %,   hernoem "Vent %")
 //
-// ENDPOINTS (12 totaal — past op 4MB Huge App):
-//   5 × MatterTemperatureSensor  (boiler top/mid/bot + qtot + vermogen)
-//   7 × MatterOnOffLight         (circuits 1–7, bidirectioneel)
+// CIRCUIT-SWITCHES — bidirectioneel:
+//   Automatisch : spiegelen circuits[i].heating_on naar Home app (via ignore_callbacks vlag)
+//   Override    : Home app toggle → 3 uur override, daarna terug naar auto
+//   Alles Auto  : één knop wist alle actieve overrides + spiegelt onmiddellijk
+//
+// VENTILATIE OVERRIDE — MatterThermostat:
+//   Slider 7–30 (HomeKit hw-limiet) → gemapped naar 0–100% via schaalfactor (/ 23.0 * 100)
+//   Setpoint op 7 (minimum) = auto, circuit-verzoeken bepalen opnieuw de fansnelheid
+//   Mode OFF in Home app = override wissen, terug naar auto
+//
+// WIJZIGINGEN t.o.v. v1:
+//   + matter_alles_auto: wist alle circuit-overrides via Home app knop
+//   + ignore_callbacks vlag: voorkomt feedback-loop bij programmatische setOnOff()
+//   + matter_vent_display: actuele fansnelheid zichtbaar in Home app
+//   + matter_vent_control: ventilatie override via thermostaatwidget
+//   + vent schaalfactor: slider 7–30 gemapped naar 0–100%
+//   + onChangeMode: OFF zet vent override terug naar auto
+//   - #define Serial Serial0 verwijderd (veroorzaakte undefined setup()/loop() link error)
 //
 // API: arduino-esp32-master 3.3.2
 // HARDWARE: ESP32-C6, 4MB Huge App partition
@@ -43,6 +63,8 @@ MatterTemperatureSensor matter_boiler_mid;    // sch_temps[2]  — middelste laa
 MatterTemperatureSensor matter_boiler_bot;    // sch_temps[5]  — onderste laag
 MatterTemperatureSensor matter_sch_qtot;      // sch_qtot      — FAKE kWh (hernoem "kWh SCH")
 MatterTemperatureSensor matter_total_power;   // total_power   — FAKE kW  (hernoem "kW totaal")
+MatterTemperatureSensor matter_vent_display;  // vent_percent  — FAKE %   (hernoem "Vent %")
+MatterThermostat        matter_vent_control;  // override vent % via setpoint (hernoem "Vent override")
 
 MatterOnOffLight        matter_circuit[7];    // Kringen 1–7, bidirectioneel
 MatterOnOffLight        matter_alles_auto;    // Reset alle overrides → auto (hernoem "Alles Auto")
@@ -77,6 +99,11 @@ SimCircuit circuits[7] = {
 };
 
 float total_power = 0.0;  // Som van power_kw van actieve kringen
+
+// Ventilatie
+int   vent_percent          = 0;    // Actuele fansnelheid (0–100%), max van alle circuit-verzoeken
+int   vent_override_percent = 0;    // 0 = auto, 1–100 = override
+bool  vent_override_active  = false;
 
 // Override timeout: 3 uur
 const unsigned long OVERRIDE_DURATION = 180UL * 60UL * 1000UL;
@@ -164,6 +191,26 @@ void sim_step() {
                      : circuits[i].heating_on;
     if (effective) total_power += circuits[i].power_kw;
   }
+
+  // Ventilatie: max van alle circuit-verzoeken (gesimuleerd op basis van heating_on)
+  // In productie komt dit van z_val via HTTP poll per kring
+  if (!vent_override_active) {
+    int max_vent = 0;
+    for (int i = 0; i < 7; i++) {
+      bool effective = circuits[i].override_active
+                       ? circuits[i].override_state
+                       : circuits[i].heating_on;
+      // Simuleer vent_request per kring: AAN → willekeurig 30–80%
+      if (effective) {
+        int sim_vent = 30 + (int)oscil(25.0f, 20.0f, periods[i], offsets[i] + 45.0f);
+        sim_vent = constrain(sim_vent, 0, 100);
+        if (sim_vent > max_vent) max_vent = sim_vent;
+      }
+    }
+    vent_percent = max_vent;
+  } else {
+    vent_percent = vent_override_percent;
+  }
 }
 
 
@@ -191,6 +238,8 @@ void update_matter_sensors() {
   matter_boiler_bot.setTemperature(sch_temps[5]);
   matter_sch_qtot.setTemperature(sch_qtot);       // kWh als "°C"
   matter_total_power.setTemperature(total_power); // kW als "°C"
+  matter_vent_display.setTemperature((float)vent_percent);   // % als "°C"
+  matter_vent_control.setLocalTemperature((float)vent_percent);
 
   // Circuit-switches: alleen spiegelen als geen override actief
   ignore_callbacks = true;  // setOnOff() hier is programmatisch, geen gebruikersingreep
@@ -238,6 +287,14 @@ void print_status() {
   }
   Serial.printf(     "║  Totaal vermogen : %.3f kW\n", total_power);
   Serial.println(F(  "╠══════════════════════════════════════════╣"));
+  Serial.println(F(  "║ VENTILATIE                                "));
+  Serial.printf(     "║  vent_percent    : %d %%\n", vent_percent);
+  if (vent_override_active) {
+    Serial.printf(   "║  override        : %d %% [OVR]\n", vent_override_percent);
+  } else {
+    Serial.println(F("║  override        : auto [AUT]"));
+  }
+  Serial.println(F(  "╠══════════════════════════════════════════╣"));
   Serial.printf(     "║  Free heap : %d %%\n",
                      (ESP.getFreeHeap() * 100) / ESP.getHeapSize());
   Serial.printf(     "║  WiFi RSSI : %d dBm\n", WiFi.RSSI());
@@ -265,6 +322,42 @@ void setup() {
   matter_boiler_bot.begin();
   matter_sch_qtot.begin();
   matter_total_power.begin();
+
+  // Ventilatie display (read-only)
+  matter_vent_display.begin();
+
+  // Ventilatie thermostat: setpoint = override %, local temp = actuele vent %
+  // Setpoint 0 = auto, 1–100 = override
+  // ControlSequenceOfOperation 2 = heating only (enkel setpoint zichtbaar, geen cooling)
+  matter_vent_control.begin((MatterThermostat::ControlSequenceOfOperation_t)2);
+  matter_vent_control.setLocalTemperature((float)vent_percent);
+  matter_vent_control.setHeatingSetpoint(0.0f);  // Start in auto
+
+  // Schaalfactor: slider range 7-30 (HomeKit limiet) -> 0-100% ventilatie
+  // map: sp_pct = round((new_sp - 7.0) / (30.0 - 7.0) * 100)
+  matter_vent_control.onChangeHeatingSetpoint([](double new_sp) -> bool {
+    int sp_pct = constrain((int)round((new_sp - 7.0) / 23.0 * 100.0), 0, 100);
+    vent_override_percent = sp_pct;
+    vent_override_active  = (sp_pct > 0);
+    if (vent_override_active) {
+      vent_percent = sp_pct;
+      Serial.printf("[HomeKit] Vent override -> %.1f (slider) = %d%% (effectief)\n", new_sp, sp_pct);
+    } else {
+      Serial.println(F("[HomeKit] Vent setpoint = 7 (min) -> terug naar auto"));
+    }
+    return true;
+  });
+
+  // Fix: OFF in Home app -> override wissen, terug naar auto
+  matter_vent_control.onChangeMode([](uint8_t mode) -> bool {
+    if (mode == 0) {
+      vent_override_active  = false;
+      vent_override_percent = 0;
+      matter_vent_control.setHeatingSetpoint(0.0f);
+      Serial.println(F("[HomeKit] Vent mode OFF -> override gewist, terug naar auto"));
+    }
+    return true;
+  });
 
   // Circuit-switches: begin + callback
   for (int i = 0; i < 7; i++) {
