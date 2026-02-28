@@ -1,5 +1,5 @@
 // =============================================================================
-// MATTER_ROOM_SIM.ino  –  v6  –  28feb26  14:00
+// ESP32-C6_ROOM_MATTER_SIM.ino  –  v6  –  28feb26  14:00
 // Simulatie van ROOM Matter/HomeKit integratie voor ESP32-C6
 // Filip Delannoy – Zarlar thuisautomatisering
 //
