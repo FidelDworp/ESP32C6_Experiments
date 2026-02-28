@@ -77,7 +77,9 @@ unsigned long last_sim_step   = 0;
 unsigned long last_serial_log = 0;
 unsigned long mov1_off_time   = 0;  // Millis waarop MOV1 terug op rust gaat
 unsigned long mov2_off_time   = 0;  // Millis waarop MOV2 terug op rust gaat
-#define MOV_HOLD_MS 30000           // Beweging blijft 30s zichtbaar in HomeKit
+#define MOV_HOLD_MS 20000           // Beweging blijft 20s zichtbaar in HomeKit
+                                    // Triggerfrequentie: 8% per 5s = gem. elke 62s
+                                    // Hold (20s) << interval (62s) → duidelijke rust zichtbaar
 
 
 // =============================================================================
@@ -98,15 +100,15 @@ void sim_step() {
   co2        = constrain((int)oscil(650, 200, 180, 60), 400, 1200);
   sun_light  = max(0.0f, oscil(400.0f, 350.0f, 1200.0f, 0));
   // PIR simulatie met hold-timer: trigger zet timer, timer bepaalt bezetting
-  // MOV1: 15% kans per 5s op nieuwe trigger → blijft 30s actief
-  if (random(100) < 15) {
+  // MOV1: 8% kans per 5s = gemiddeld elke 62s trigger, hold=20s → duidelijke rust zichtbaar
+  if (random(100) < 8) {
     mov1_off_time = millis() + MOV_HOLD_MS;
     Serial.println(F("[SIM] MOV1 trigger!"));
   }
   mov1_light = (millis() < mov1_off_time);
 
-  // MOV2: 10% kans per 5s
-  if (random(100) < 10) {
+  // MOV2: 5% kans per 5s = gemiddeld elke 100s trigger
+  if (random(100) < 5) {
     mov2_off_time = millis() + MOV_HOLD_MS;
     Serial.println(F("[SIM] MOV2 trigger!"));
   }
@@ -208,11 +210,18 @@ void setup() {
     return true;
   });
 
-  // Sfeerverlichting kleurpicker (pixels 2+)
-  // on/off wordt GENEGEERD: matter_pixels is enkel een kleurinstelling voor neo_r/g/b
-  // Individuele pixels hebben hun eigen aan/uit via pixel_on[i] in de room sketch
+  // ── Sfeerverlichting kleurpicker ─────────────────────────────────────────
+  // MEMO INTEGRATIE IN TESTROOM:
+  //   matter_pixels stelt neo_r/g/b in voor de hele room.
+  //   Dit is GEEN aan/uit schakelaar voor de pixels!
+  //   De on/off toggle in HomeKit wordt genegeerd en altijd op "aan" gehouden,
+  //   zodat de kleurpicker altijd beschikbaar blijft.
+  //   Individuele pixels gaan aan/uit via pixel_on[i] in de pixelloop.
+  //   Als neo_r/g/b wijzigt via HomeKit → alle pixel_on[i]==true pixels
+  //   nemen automatisch de nieuwe kleur over via setTargetColor(i, neo_r, neo_g, neo_b).
+  //   NVS opslaan na kleurwijziging: preferences.putUChar(NVS_NEO_R, neo_r); etc.
   matter_pixels.begin();
-  matter_pixels.setOnOff(true);  // Altijd "aan" in HomeKit – is een kleurpicker, geen schakelaar
+  matter_pixels.setOnOff(true);
   matter_pixels.onChangeOnOff([](bool on_off) -> bool {
     // Niet doorgeven aan pixels – on/off heeft hier geen betekenis
     // We melden altijd "aan" terug zodat HomeKit de switch niet toont als UIT
