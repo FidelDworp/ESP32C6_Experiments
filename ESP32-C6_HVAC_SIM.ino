@@ -1,41 +1,44 @@
 // =============================================================================
-// ESP32-C6_HVAC_SIM.ino  –  v2  –  28feb26  19:30
+// ESP32-C6_HVAC_SIM.ino  –  v2.1 –  01mrt26
 // Simulatie van HVAC Matter/HomeKit integratie voor ESP32-C6
 // Filip Delannoy – Zarlar thuisautomatisering
 //
+// WIJZIGINGEN v2:
+//   MatterOnOffLight → MatterOnOffPlugin voor alle kring-switches en Alles Auto
+//     → semantisch correct: een verwarmingskring is een plugin, geen licht
+//   MatterThermostat + MatterTemperatureSensor (vent display) → MatterFan
+//     → 1 endpoint ipv 2, directe speed 0–100% ↔ vent_percent
+//     → geen setpoint-truc meer nodig
+//   Race condition fix in circuit callbacks:
+//     override_start = millis() EERST, dan override_active = true
+//     → zelfde principe als ECO-boiler v6.3: garandeert correcte starttijd
+//       vóór check_overrides() de vlag ziet (Matter callbacks = aparte FreeRTOS-taak)
+//   ignore_callbacks in MatterFan callbacks consistent toegepast (ECO-patroon)
+//   update_matter_sensors() aanroep na sim_step() in setup() (ECO-patroon)
+//
+// WIJZIGINGEN v2.1:
+//   FIX: setMode() samen met setSpeedPercent() in update_matter_sensors()
+//     → Home app bevriest slider op 0 als fan in FAN_MODE_OFF staat;
+//       setSpeedPercent() zonder mode-update wordt dan genegeerd
+//     → auto mode: vent_percent>0 → FAN_MODE_HIGH, ==0 → FAN_MODE_OFF
+//     → override mode: mode ongemoeid (gebruiker bepaalt via Home app)
+//   FIX: resterende override-tijd toegevoegd aan print_status() ventilatie
+//
 // DOEL: Test de volledige HomeKit interface zonder echte sensoren/hardware.
 //       Gesimuleerde boilertemperaturen en circuittoestanden fluctueren realistisch.
-//
-// ENDPOINTS (14 totaal — getest op 4MB Huge App):
-//   5 × MatterTemperatureSensor  (boiler top/mid/bot + kWh SCH + kW totaal)
-//   1 × MatterTemperatureSensor  (vent_percent FAKE — hernoem "Vent %")
-//   1 × MatterThermostat         (ventilatie override 0–100% — hernoem "Vent override")
-//   7 × MatterOnOffLight         (circuits 1–7, bidirectioneel)
-//   1 × MatterOnOffLight         (Alles Auto — wist alle circuit-overrides)
+//       Circuit-switches zijn bidirectioneel:
+//         - Automatisch: spiegelen circuits[i].heating_on → Home app
+//         - Override: Home app toggle → 3 uur override, dan terug naar automaat
 //
 // FAKE sensors (geen eigen Matter type in Apple Home):
-//   sch_qtot     → MatterTemperatureSensor  (waarde = kWh, hernoem "kWh SCH")
-//   total_power  → MatterTemperatureSensor  (waarde = kW,  hernoem "kW totaal")
-//   vent_percent → MatterTemperatureSensor  (waarde = %,   hernoem "Vent %")
+//   sch_qtot      → MatterTemperatureSensor  (waarde = kWh, hernoem naar "kWh SCH")
+//   total_power   → MatterTemperatureSensor  (waarde = kW,  hernoem naar "kW totaal")
 //
-// CIRCUIT-SWITCHES — bidirectioneel:
-//   Automatisch : spiegelen circuits[i].heating_on naar Home app (via ignore_callbacks vlag)
-//   Override    : Home app toggle → 3 uur override, daarna terug naar auto
-//   Alles Auto  : één knop wist alle actieve overrides + spiegelt onmiddellijk
-//
-// VENTILATIE OVERRIDE — MatterThermostat:
-//   Slider 7–30 (HomeKit hw-limiet) → gemapped naar 0–100% via schaalfactor (/ 23.0 * 100)
-//   Setpoint op 7 (minimum) = auto, circuit-verzoeken bepalen opnieuw de fansnelheid
-//   Mode OFF in Home app = override wissen, terug naar auto
-//
-// WIJZIGINGEN t.o.v. v1:
-//   + matter_alles_auto: wist alle circuit-overrides via Home app knop
-//   + ignore_callbacks vlag: voorkomt feedback-loop bij programmatische setOnOff()
-//   + matter_vent_display: actuele fansnelheid zichtbaar in Home app
-//   + matter_vent_control: ventilatie override via thermostaatwidget
-//   + vent schaalfactor: slider 7–30 gemapped naar 0–100%
-//   + onChangeMode: OFF zet vent override terug naar auto
-//   - #define Serial Serial0 verwijderd (veroorzaakte undefined setup()/loop() link error)
+// ENDPOINTS (13 totaal — past op 4MB Huge App):
+//   5 × MatterTemperatureSensor  (boiler top/mid/bot + qtot + vermogen)
+//   7 × MatterOnOffPlugin        (circuits 1–7, bidirectioneel)
+//   1 × MatterOnOffPlugin        (Alles Auto — reset alle overrides)
+//   1 × MatterFan                (ventilatie: snelheid + aan/uit, hernoem "Ventilatie")
 //
 // API: arduino-esp32-master 3.3.2
 // HARDWARE: ESP32-C6, 4MB Huge App partition
@@ -45,7 +48,8 @@
 #include <nvs_flash.h>
 #include <Matter.h>
 #include <MatterEndPoints/MatterTemperatureSensor.h>
-#include <MatterEndPoints/MatterOnOffLight.h>
+#include <MatterEndPoints/MatterOnOffPlugin.h>
+#include <MatterEndPoints/MatterFan.h>
 
 
 // =============================================================================
@@ -58,16 +62,16 @@ const char* WIFI_PASS = "adnoh123";
 // =============================================================================
 // Matter endpoints
 // =============================================================================
-MatterTemperatureSensor matter_boiler_top;    // sch_temps[0]  — bovenste laag
-MatterTemperatureSensor matter_boiler_mid;    // sch_temps[2]  — middelste laag
-MatterTemperatureSensor matter_boiler_bot;    // sch_temps[5]  — onderste laag
-MatterTemperatureSensor matter_sch_qtot;      // sch_qtot      — FAKE kWh (hernoem "kWh SCH")
-MatterTemperatureSensor matter_total_power;   // total_power   — FAKE kW  (hernoem "kW totaal")
-MatterTemperatureSensor matter_vent_display;  // vent_percent  — FAKE %   (hernoem "Vent %")
-MatterThermostat        matter_vent_control;  // override vent % via setpoint (hernoem "Vent override")
+MatterTemperatureSensor matter_boiler_top;   // sch_temps[0]  — bovenste laag
+MatterTemperatureSensor matter_boiler_mid;   // sch_temps[2]  — middelste laag
+MatterTemperatureSensor matter_boiler_bot;   // sch_temps[5]  — onderste laag
+MatterTemperatureSensor matter_sch_qtot;     // sch_qtot      — FAKE kWh (hernoem "kWh SCH")
+MatterTemperatureSensor matter_total_power;  // total_power   — FAKE kW  (hernoem "kW totaal")
 
-MatterOnOffLight        matter_circuit[7];    // Kringen 1–7, bidirectioneel
-MatterOnOffLight        matter_alles_auto;    // Reset alle overrides → auto (hernoem "Alles Auto")
+MatterOnOffPlugin       matter_circuit[7];   // Kringen 1–7, bidirectioneel
+MatterOnOffPlugin       matter_alles_auto;   // Reset alle overrides → auto (hernoem "Alles Auto")
+
+MatterFan               matter_vent;         // Ventilatie: snelheid + aan/uit (hernoem "Ventilatie")
 
 
 // =============================================================================
@@ -104,14 +108,17 @@ float total_power = 0.0;  // Som van power_kw van actieve kringen
 int   vent_percent          = 0;    // Actuele fansnelheid (0–100%), max van alle circuit-verzoeken
 int   vent_override_percent = 0;    // 0 = auto, 1–100 = override
 bool  vent_override_active  = false;
+unsigned long vent_override_start = 0;
 
-// Override timeout: 3 uur
-const unsigned long OVERRIDE_DURATION = 180UL * 60UL * 1000UL;
+// Override timeout: 3 uur (circuits), 3 uur (ventilatie)
+const unsigned long OVERRIDE_DURATION     = 180UL * 60UL * 1000UL;
+const unsigned long VENT_OVERRIDE_DURATION = 180UL * 60UL * 1000UL;
 
 // Flag: "Alles Auto" knop ingedrukt → afhandelen in loop(), niet in callback
 bool alles_auto_requested = false;
 
-// Flag: programmatische setOnOff() → callbacks negeren (voorkomt feedback-loop)
+// Flag: programmatische setOnOff() / setSpeedPercent() → callbacks negeren
+// (voorkomt feedback-loop; zelfde principe als ECO-boiler)
 bool ignore_callbacks = false;
 
 // Simulatie timers
@@ -132,7 +139,7 @@ float oscil(float center, float amplitude, float period_s, float offset_s) {
 // Bereken energieinhoud SCH-boiler (vereenvoudigd, identiek aan productie)
 // =============================================================================
 float calculateQtot() {
-  const float Cp             = 1.16f;
+  const float Cp                = 1.16f;
   const float boiler_ref_temp   = 20.0f;
   const float boiler_layer_volume = 50.0f;
   float total_energy = 0.0f;
@@ -161,25 +168,22 @@ float calculateQtot() {
 void sim_step() {
 
   // Boilerlagen: stratificatie — elke laag eigen fase en amplitude
-  // Top warmt snel op en koelt ook sneller af; bodem traag
-  sch_temps[0] = constrain(oscil(82.0f,  6.0f, 600.0f,   0.0f), 55.0f, 92.0f);
-  sch_temps[1] = constrain(oscil(79.0f,  5.5f, 640.0f,  40.0f), 50.0f, 90.0f);
-  sch_temps[2] = constrain(oscil(75.0f,  5.0f, 700.0f,  90.0f), 45.0f, 88.0f);
-  sch_temps[3] = constrain(oscil(68.0f,  4.5f, 780.0f, 150.0f), 40.0f, 82.0f);
-  sch_temps[4] = constrain(oscil(55.0f,  4.0f, 900.0f, 220.0f), 35.0f, 70.0f);
-  sch_temps[5] = constrain(oscil(42.0f,  3.0f,1100.0f, 310.0f), 25.0f, 55.0f);
+  sch_temps[0] = constrain(oscil(82.0f,  6.0f,  600.0f,   0.0f), 55.0f, 92.0f);
+  sch_temps[1] = constrain(oscil(79.0f,  5.5f,  640.0f,  40.0f), 50.0f, 90.0f);
+  sch_temps[2] = constrain(oscil(75.0f,  5.0f,  700.0f,  90.0f), 45.0f, 88.0f);
+  sch_temps[3] = constrain(oscil(68.0f,  4.5f,  780.0f, 150.0f), 40.0f, 82.0f);
+  sch_temps[4] = constrain(oscil(55.0f,  4.0f,  900.0f, 220.0f), 35.0f, 70.0f);
+  sch_temps[5] = constrain(oscil(42.0f,  3.0f, 1100.0f, 310.0f), 25.0f, 55.0f);
 
   sch_qtot = calculateQtot();
 
   // Circuits: elke kring heeft eigen ritme (duty cycle simulatie)
-  // Periodes lopen uiteen zodat ze niet allemaal synchroon aan/uit gaan
-  const float periods[7] = {180.0f, 210.0f, 150.0f, 240.0f, 195.0f, 270.0f, 225.0f};
-  const float offsets[7] = {  0.0f,  30.0f,  60.0f,  90.0f, 120.0f, 150.0f, 180.0f};
+  const float periods[7]    = {180.0f, 210.0f, 150.0f, 240.0f, 195.0f, 270.0f, 225.0f};
+  const float offsets[7]    = {  0.0f,  30.0f,  60.0f,  90.0f, 120.0f, 150.0f, 180.0f};
+  const float thresholds[7] = {  0.2f,   0.1f,   0.3f,  -0.1f,  0.15f,  0.25f,   0.0f};
 
   for (int i = 0; i < 7; i++) {
     float wave = oscil(0.0f, 1.0f, periods[i], offsets[i]);
-    // heating_on = true als golf boven drempel (varieert per kring → gevarieerde duty)
-    const float thresholds[7] = {0.2f, 0.1f, 0.3f, -0.1f, 0.15f, 0.25f, 0.0f};
     circuits[i].heating_on = (wave > thresholds[i]);
   }
 
@@ -193,14 +197,12 @@ void sim_step() {
   }
 
   // Ventilatie: max van alle circuit-verzoeken (gesimuleerd op basis van heating_on)
-  // In productie komt dit van z_val via HTTP poll per kring
   if (!vent_override_active) {
     int max_vent = 0;
     for (int i = 0; i < 7; i++) {
       bool effective = circuits[i].override_active
                        ? circuits[i].override_state
                        : circuits[i].heating_on;
-      // Simuleer vent_request per kring: AAN → willekeurig 30–80%
       if (effective) {
         int sim_vent = 30 + (int)oscil(25.0f, 20.0f, periods[i], offsets[i] + 45.0f);
         sim_vent = constrain(sim_vent, 0, 100);
@@ -215,22 +217,37 @@ void sim_step() {
 
 
 // =============================================================================
-// Override timeout bewaken
+// Override timeouts bewaken
 // =============================================================================
 void check_overrides() {
+  // Circuit overrides
   for (int i = 0; i < 7; i++) {
     if (circuits[i].override_active &&
         millis() - circuits[i].override_start > OVERRIDE_DURATION) {
       circuits[i].override_active = false;
-      Serial.printf(F("[OVERRIDE] Kring %d '%s' — override vervallen na 3u, terug naar auto\n"),
+      Serial.printf("[OVERRIDE] Kring %d '%s' — vervallen na 3u, terug naar auto\n",
                     i + 1, circuits[i].name);
+      // Matter UI wordt bijgewerkt in update_matter_sensors() binnen 5s
     }
+  }
+
+  // Ventilatie override
+  if (vent_override_active &&
+      millis() - vent_override_start > VENT_OVERRIDE_DURATION) {
+    vent_override_active  = false;
+    vent_override_percent = 0;
+    Serial.println(F("[OVERRIDE] Ventilatie — vervallen na 3u, terug naar auto"));
+    // Fan speed wordt bijgewerkt in update_matter_sensors() binnen 5s
   }
 }
 
 
 // =============================================================================
-// Matter sensor updates — alle read-only sensors → HomeKit
+// Matter sensor updates — alle read-only sensors + fan feedback → HomeKit
+//
+// REGEL: setSpeedPercent() mag hier (feedback, geen gebruikersingreep).
+//        ignore_callbacks: voorkomt dat setSpeedPercent() de onChangeSpeedPercent
+//        callback triggert en een nieuwe override aanmaakt (ECO-patroon).
 // =============================================================================
 void update_matter_sensors() {
   matter_boiler_top.setTemperature(sch_temps[0]);
@@ -238,11 +255,22 @@ void update_matter_sensors() {
   matter_boiler_bot.setTemperature(sch_temps[5]);
   matter_sch_qtot.setTemperature(sch_qtot);       // kWh als "°C"
   matter_total_power.setTemperature(total_power); // kW als "°C"
-  matter_vent_display.setTemperature((float)vent_percent);   // % als "°C"
-  matter_vent_control.setLocalTemperature((float)vent_percent);
+
+  // Fan: snelheidsfeedback = actuele vent_percent terugpushen naar HomeKit
+  // In auto mode updaten we ook de mode (ON/OFF), anders bevriest de slider
+  // op 0 wanneer de fan in FAN_MODE_OFF staat — Home app negeert setSpeedPercent()
+  // dan volledig. In override mode laten we de mode ongemoeid (gebruiker bepaalt).
+  ignore_callbacks = true;
+  matter_vent.setSpeedPercent((uint8_t)vent_percent);
+  if (!vent_override_active) {
+    matter_vent.setMode(vent_percent > 0
+                        ? MatterFan::FAN_MODE_HIGH
+                        : MatterFan::FAN_MODE_OFF);
+  }
+  ignore_callbacks = false;
 
   // Circuit-switches: alleen spiegelen als geen override actief
-  ignore_callbacks = true;  // setOnOff() hier is programmatisch, geen gebruikersingreep
+  ignore_callbacks = true;
   for (int i = 0; i < 7; i++) {
     if (!circuits[i].override_active) {
       matter_circuit[i].setOnOff(circuits[i].heating_on);
@@ -257,7 +285,7 @@ void update_matter_sensors() {
 // =============================================================================
 void print_status() {
   Serial.println(F("\n╔══════════════════════════════════════════╗"));
-  Serial.println(F(  "║     ESP32-C6_HVAC_SIM  –  Status        ║"));
+  Serial.println(F(  "║     ESP32-C6_HVAC_SIM  –  v2  Status    ║"));
   Serial.printf(     "║  Uptime : %lu s\n", millis() / 1000);
   Serial.println(F(  "╠══════════════════════════════════════════╣"));
   Serial.println(F(  "║ BOILER SCH                                "));
@@ -290,7 +318,10 @@ void print_status() {
   Serial.println(F(  "║ VENTILATIE                                "));
   Serial.printf(     "║  vent_percent    : %d %%\n", vent_percent);
   if (vent_override_active) {
-    Serial.printf(   "║  override        : %d %% [OVR]\n", vent_override_percent);
+    unsigned long vent_rem = (VENT_OVERRIDE_DURATION -
+                             (millis() - vent_override_start)) / 60000UL;
+    Serial.printf(   "║  override        : %d %% [OVR] %lum resterend\n",
+                     vent_override_percent, vent_rem);
   } else {
     Serial.println(F("║  override        : auto [AUT]"));
   }
@@ -308,7 +339,7 @@ void print_status() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println(F("\n=== ESP32-C6_HVAC_SIM v1 ==="));
+  Serial.println(F("\n=== ESP32-C6_HVAC_SIM v2 ==="));
 
   // ── WiFi ─────────────────────────────────────────────────────────────────
   Serial.printf("WiFi: verbinden met '%s' ...\n", WIFI_SSID);
@@ -316,76 +347,98 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.printf("\nWiFi OK: %s\n", WiFi.localIP().toString().c_str());
 
-  // ── Matter endpoints initialiseren ───────────────────────────────────────
+  // ── Temperatuursensoren ──────────────────────────────────────────────────
   matter_boiler_top.begin();
   matter_boiler_mid.begin();
   matter_boiler_bot.begin();
   matter_sch_qtot.begin();
   matter_total_power.begin();
 
-  // Ventilatie display (read-only)
-  matter_vent_display.begin();
-
-  // Ventilatie thermostat: setpoint = override %, local temp = actuele vent %
-  // Setpoint 0 = auto, 1–100 = override
-  // ControlSequenceOfOperation 2 = heating only (enkel setpoint zichtbaar, geen cooling)
-  matter_vent_control.begin((MatterThermostat::ControlSequenceOfOperation_t)2);
-  matter_vent_control.setLocalTemperature((float)vent_percent);
-  matter_vent_control.setHeatingSetpoint(0.0f);  // Start in auto
-
-  // Schaalfactor: slider range 7-30 (HomeKit limiet) -> 0-100% ventilatie
-  // map: sp_pct = round((new_sp - 7.0) / (30.0 - 7.0) * 100)
-  matter_vent_control.onChangeHeatingSetpoint([](double new_sp) -> bool {
-    int sp_pct = constrain((int)round((new_sp - 7.0) / 23.0 * 100.0), 0, 100);
-    vent_override_percent = sp_pct;
-    vent_override_active  = (sp_pct > 0);
-    if (vent_override_active) {
-      vent_percent = sp_pct;
-      Serial.printf("[HomeKit] Vent override -> %.1f (slider) = %d%% (effectief)\n", new_sp, sp_pct);
-    } else {
-      Serial.println(F("[HomeKit] Vent setpoint = 7 (min) -> terug naar auto"));
-    }
-    return true;
-  });
-
-  // Fix: OFF in Home app -> override wissen, terug naar auto
-  matter_vent_control.onChangeMode([](uint8_t mode) -> bool {
-    if (mode == 0) {
-      vent_override_active  = false;
-      vent_override_percent = 0;
-      matter_vent_control.setHeatingSetpoint(0.0f);
-      Serial.println(F("[HomeKit] Vent mode OFF -> override gewist, terug naar auto"));
-    }
-    return true;
-  });
-
-  // Circuit-switches: begin + callback
+  // ── Circuit-plugins: begin + callback ───────────────────────────────────
   for (int i = 0; i < 7; i++) {
     matter_circuit[i].begin();
     matter_circuit[i].setOnOff(circuits[i].heating_on);
 
     // Lambda met index capture — override activeren bij handmatige ingreep
+    // Race condition fix: override_start EERST zetten vóór override_active = true
+    // → Matter callbacks lopen in eigen FreeRTOS-taak; check_overrides() in loop-taak
+    // → starttijd moet gegarandeerd klaar zijn vóór de vlag zichtbaar wordt
     matter_circuit[i].onChangeOnOff([i](bool on_off) -> bool {
       if (ignore_callbacks) return true;  // Programmatische update — negeren
-      circuits[i].override_active = true;
+      circuits[i].override_start  = millis();   // EERST
+      circuits[i].override_active = true;       // DAN
       circuits[i].override_state  = on_off;
-      circuits[i].override_start  = millis();
       Serial.printf("[HomeKit] Kring %d '%s' → override %s (3u)\n",
                     i + 1, circuits[i].name, on_off ? "AAN" : "UIT");
-      // "Alles Auto" knop uit: er is nu een actieve override
+      // "Alles Auto" plugin uit: er is nu een actieve override
+      ignore_callbacks = true;
       matter_alles_auto.setOnOff(false);
+      ignore_callbacks = false;
       return true;
     });
   }
 
-  // ── Alles Auto switch ────────────────────────────────────────────────────
+  // ── Alles Auto plugin ────────────────────────────────────────────────────
   matter_alles_auto.begin();
   matter_alles_auto.setOnOff(false);  // Altijd UIT in rust
   matter_alles_auto.onChangeOnOff([](bool on_off) -> bool {
+    if (ignore_callbacks) return true;
     if (on_off) {
       // Niet hier afhandelen — vlag zetten, loop() doet de rest
       alles_auto_requested = true;
       Serial.println(F("[HomeKit] Alles Auto → aangevraagd, loop() handelt af"));
+    }
+    return true;
+  });
+
+  // ── MatterFan: ventilatiebediening ──────────────────────────────────────
+  // FAN_MODE_SEQ_OFF_HIGH: enkel OFF en HIGH als modus-stappen
+  // Begin met speed 0, mode OFF
+  matter_vent.begin(0, MatterFan::FAN_MODE_OFF, MatterFan::FAN_MODE_SEQ_OFF_HIGH);
+
+  // Speed slider bewogen in Home app → ventilatie override
+  matter_vent.onChangeSpeedPercent([](uint8_t new_pct) -> bool {
+    if (ignore_callbacks) return true;
+
+    if (new_pct == 0) {
+      // Snelheid naar 0 → terug naar auto
+      vent_override_active  = false;
+      vent_override_percent = 0;
+      Serial.println(F("[HomeKit] Vent speed = 0% → terug naar auto"));
+    } else {
+      // Override activeren — starttijd EERST, dan vlag (race condition fix)
+      vent_override_start   = millis();   // EERST
+      vent_override_active  = true;       // DAN
+      vent_override_percent = new_pct;
+      vent_percent          = new_pct;
+      Serial.printf("[HomeKit] Vent speed override → %d%%\n", new_pct);
+    }
+    return true;
+  });
+
+  // Mode gewijzigd in Home app (OFF-knop of modus-selectie)
+  matter_vent.onChangeMode([](uint8_t new_mode) -> bool {
+    if (ignore_callbacks) return true;
+
+    if (new_mode == MatterFan::FAN_MODE_OFF) {
+      // Expliciet UIT gezet → override wissen, terug naar auto
+      vent_override_active  = false;
+      vent_override_percent = 0;
+      ignore_callbacks = true;
+      matter_vent.setSpeedPercent(0);
+      ignore_callbacks = false;
+      Serial.println(F("[HomeKit] Vent mode OFF → terug naar auto, speed=0"));
+    } else {
+      // Mode AAN zonder specifieke speed → minimale override
+      if (!vent_override_active) {
+        vent_override_start   = millis();   // EERST
+        vent_override_active  = true;       // DAN
+        vent_override_percent = 30;         // Minimale ventilatie bij handmatig AAN
+        ignore_callbacks = true;
+        matter_vent.setSpeedPercent(30);
+        ignore_callbacks = false;
+        Serial.println(F("[HomeKit] Vent mode AAN → override 30%"));
+      }
     }
     return true;
   });
@@ -447,12 +500,20 @@ void loop() {
         matter_circuit[i].setOnOff(circuits[i].heating_on);
       }
     }
+    // Ventilatie ook terugzetten naar auto
+    if (vent_override_active) {
+      vent_override_active  = false;
+      vent_override_percent = 0;
+      matter_vent.setSpeedPercent((uint8_t)vent_percent);
+      count++;
+    }
     ignore_callbacks = false;
     matter_alles_auto.setOnOff(false);
-    Serial.printf("[AUTO] %d override(s) gewist — alle kringen terug naar [AUT]\n", count);
+    Serial.printf("[AUTO] %d override(s) gewist — alle kringen + vent terug naar [AUT]\n", count);
   }
 
-  // Override timeouts bewaken
+  // check_overrides() vóór de 5s timer: als vlag net gewist wordt,
+  // pusht update_matter_sensors() onmiddellijk de correcte auto-toestand.
   check_overrides();
 
   // Simulatiestap + Matter update elke 5s
