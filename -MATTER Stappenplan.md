@@ -143,4 +143,14 @@ Hernoem na koppelen in de Home app:
 
 ---
 
+## Stap-voor-stap om ghosts te verwijderen
+
+- Ga naar Instellingen op je iPhone → scroll naar beneden → tik op Algemeen (General).
+- Scroll naar beneden in Algemeen → tik op Matter Accessories (of Matter-accessoires).
+    => Je ziet hier een lijst van alle Matter-devices die ooit gepaard zijn met je Apple ID (inclusief ghosts zoals "Matter Accessory").
+- Elke entry toont serial number, Matter code of "Ghost entry" als het onbekend is.
+- Tik op een entry → tik op Verwijderen (of Remove) → bevestig.
+
+---
+
 *Zarlar thuisautomatisering — Filip Delannoy*
