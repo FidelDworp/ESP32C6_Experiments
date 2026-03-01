@@ -1,7 +1,20 @@
 // =============================================================================
-// ESP32-C6_ROOM_MATTER_SIM.ino  –  v6  –  28feb26  14:00
+// ESP32-C6_ROOM_MATTER_SIM.ino  –  v7  –  01mrt26
 // Simulatie van ROOM Matter/HomeKit integratie voor ESP32-C6
 // Filip Delannoy – Zarlar thuisautomatisering
+//
+// WIJZIGINGEN v7:
+//   MatterOnOffLight matter_bed   → MatterOnOffPlugin
+//     → bed-modus is een logische schakelaar, geen lamp
+//   MatterOnOffLight matter_thuis → MatterOnOffPlugin
+//     → aanwezigheidsmodus is een logische schakelaar, geen lamp
+//   matter_pir1_light / matter_pir2_light blijven MatterOnOffLight
+//     → sturen echte NeoPixels aan (pixel_mode[0/1]) → wél lampen
+//   ignore_callbacks flag toegevoegd (HVAC-patroon)
+//     → voorkomt feedback-loop in matter_pixels.onChangeOnOff
+//        die programmatisch setOnOff(true) terugschrijft
+//   setup(): sim_step() vóór update_matter_sensors() (HVAC-patroon)
+//     → SIM start met berekende waarden i.p.v. statische initialisatiewaarden
 //
 // DOEL: Test de volledige HomeKit interface zonder echte sensoren.
 //       Gesimuleerde waarden fluctueren realistisch.
@@ -30,6 +43,7 @@
 #include <MatterEndPoints/MatterThermostat.h>
 #include <MatterEndPoints/MatterColorLight.h>
 #include <MatterEndPoints/MatterOnOffLight.h>
+#include <MatterEndPoints/MatterOnOffPlugin.h>
 
 
 // =============================================================================
@@ -50,10 +64,10 @@ MatterTemperatureSensor  matter_co2;        // co2 FAKE   (ppm÷100 als °C – 
 MatterTemperatureSensor  matter_lux;        // sun_light FAKE (lux/10 vermeld als °C – hernoem naar "Lux /10")
 MatterThermostat         matter_thermostat; // heating_setpoint + room_temp
 MatterColorLight         matter_pixels;     // neo_r/g/b  (sfeerverlichting)
-MatterOnOffLight         matter_bed;        // bed        (0/1)
-MatterOnOffLight         matter_thuis;      // home_mode  (0=Weg, 1=Thuis)
-MatterOnOffLight         matter_pir1_light; // pixel_mode[0] (0=AUTO, 1=MANUEEL)
-MatterOnOffLight         matter_pir2_light; // pixel_mode[1] (0=AUTO, 1=MANUEEL)
+MatterOnOffPlugin        matter_bed;        // bed        (0/1) – logische schakelaar, geen lamp
+MatterOnOffPlugin        matter_thuis;      // home_mode  (0=Weg, 1=Thuis) – logische schakelaar, geen lamp
+MatterOnOffLight         matter_pir1_light; // pixel_mode[0] (0=AUTO, 1=MANUEEL) – stuurt NeoPixel aan
+MatterOnOffLight         matter_pir2_light; // pixel_mode[1] (0=AUTO, 1=MANUEEL) – stuurt NeoPixel aan
 
 
 // =============================================================================
@@ -72,6 +86,11 @@ int     bed              = 0;       // 0/1
 uint8_t neo_r = 255, neo_g = 200, neo_b = 80;  // Room kleurinstelling voor alle pixels
 int     pixel_mode[2]    = {0, 0};  // 0=AUTO, 1=MANUEEL (MOV1, MOV2)
 uint8_t thermostat_mode  = 0;       // 0=UIT, 4=VERWARMING (Matter spec)
+
+// Flag: programmatische setOnOff() → callbacks negeren
+// Voorkomt feedback-loop wanneer matter_pixels.onChangeOnOff() setOnOff(true) terugschrijft
+// (Matter callbacks lopen in eigen FreeRTOS-taak – zelfde patroon als HVAC_SIM)
+bool ignore_callbacks = false;
 
 unsigned long last_sim_step   = 0;
 unsigned long last_serial_log = 0;
@@ -176,7 +195,7 @@ void print_status() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println(F("\n=== MATTER_ROOM_SIM v6 ==="));
+  Serial.println(F("\n=== MATTER_ROOM_SIM v7 ==="));
 
   // ── WiFi ─────────────────────────────────────────────────────────────────
   Serial.printf("WiFi: verbinden met '%s' ...\n", WIFI_SSID);
@@ -223,9 +242,12 @@ void setup() {
   matter_pixels.begin();
   matter_pixels.setOnOff(true);
   matter_pixels.onChangeOnOff([](bool on_off) -> bool {
+    if (ignore_callbacks) return true;
     // Niet doorgeven aan pixels – on/off heeft hier geen betekenis
     // We melden altijd "aan" terug zodat HomeKit de switch niet toont als UIT
+    ignore_callbacks = true;
     matter_pixels.setOnOff(true);
+    ignore_callbacks = false;
     Serial.println(F("[HomeKit] matter_pixels on/off genegeerd (kleurpicker only)"));
     return true;
   });
@@ -302,6 +324,8 @@ void setup() {
   }
   Serial.println(F("══════════════════════════════════════\n"));
 
+  // Eerste simulatiestap + push naar Matter (HVAC-patroon: berekende waarden, geen statische initialisatiewaarden)
+  sim_step();
   update_matter_sensors();
   print_status();
 }
