@@ -1,5 +1,5 @@
 // MATRIX_TEST_serpentine.ino
-// Test sketch om de exacte pixel mapping te bepalen
+// Test sketch om de exacte pixel mapping te bepalen van een matrix met "serpentine" volgorde.
 // 
 // GEBRUIK:
 // 1. Upload deze sketch
