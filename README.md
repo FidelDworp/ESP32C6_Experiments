@@ -1,6 +1,23 @@
 # ESP32C6_Experiments
 
-ESP32C6_TEST.ino = Pin Test voor controller ESP32-C6 gemonteerd op een "Freenove Breakout Board" met ledjes per pin.
+Losse test- en proefsketches voor de ESP32-C6. **Hier horen experimenten thuis, niet in de productiesketches** (zie de ROOM-standaard in `ESP32C6_ROOMS`). Elke sketch staat in een eigen map met dezelfde naam, zodat de Arduino IDE hem rechtstreeks opent.
+
+| Map | Wat |
+|---|---|
+| `ESP32C6_TEST/` | Pintest op een Freenove-breakoutbord met ledjes per pin (30- of 32-pinsmodule), met WiFi-scan en flashinfo. Voorbeeldrapport hieronder |
+| `ESP32-C6_PIN_SELFTEST/` | Batchtest van alle GPIO's (v7, zonder GPIO16/17: USB-serial) |
+| `ESP32_WIFI-Test/` | Eenvoudige WiFi-test |
+| `ESP32_DS18B20_TEST/` | Proof of concept DS18B20 op de ESP32-C6 (de gewone OneWire-bibliotheek werkte niet) |
+| `ESP32C6_DS18B20_ID-scanner/` | Welke DS18B20's hangen er op de bus? Toont de adressen |
+| `Pixel_sequence_Test/` | Pixelvolgorde bepalen van een matrix in "serpentine"-volgorde |
+| `docs/ESP32-C6_ping-optimalisatie.md` | Notities over ping- en WiFi-optimalisatie |
+| `old/` | Matter-simulaties (ECO, HVAC, ROOM) en het Matter-stappenplan: niet meer in gebruik sinds Matter van de ESP32's verdween (nov 2026) |
+
+---
+
+## ESP32C6_TEST
+
+`ESP32C6_TEST.ino` = Pin Test voor controller ESP32-C6 gemonteerd op een "Freenove Breakout Board" met ledjes per pin.
 
 Beide types ESP32-C6 controllers kunnen getest worden.
 In serial monitor: Typ '30' of '32' voor board versie. Daarna Typ aantal seconden per pin (1-20).
